@@ -1,4 +1,4 @@
-name: Manage Azure Resources (Create or Delete)
+name: Manage Azure Resources (Locked Down)
 
 on:
   workflow_dispatch:
@@ -10,14 +10,25 @@ on:
         options:
           - create
           - delete
+      confirmDelete:
+        description: "Type 'YES_I_UNDERSTAND' to confirm deletion (required when mode=delete)"
+        required: false
+        default: ""
 
 permissions:
   id-token: write
   contents: read
 
+env:
+  RESOURCE_GROUP: FQCT-ResourceGroup
+  LOCATION: westeurope
+  KEYVAULT_NAME: fqct-kv-main
+
 jobs:
-  manage:
+  create:
+    if: ${{ github.event.inputs.mode == 'create' }}
     runs-on: ubuntu-latest
+    environment: azure-prod   # <-- protect this env in GitHub
 
     steps:
     - name: Checkout repository
@@ -28,102 +39,117 @@ jobs:
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    - name: Execute Create/Delete Logic
+    - name: Create / Update Azure Resources
       shell: bash
       run: |
         set -e
 
-        MODE="${{ github.event.inputs.mode }}"
-        RESOURCE_GROUP="FQCT-ResourceGroup"
-        LOCATION="westeurope"
-        KEYVAULT_NAME="fqct-kv-main"   # stable name for reuse
-        SERVICE_PRINCIPAL_NAME="KeyVaultSP"
+        RESOURCE_GROUP="${RESOURCE_GROUP}"
+        LOCATION="${LOCATION}"
+        KEYVAULT_NAME="${KEYVAULT_NAME}"
 
-        echo "Selected mode: $MODE"
-
-        if [ "$MODE" = "delete" ]; then
-          echo "Deleting Resource Group: $RESOURCE_GROUP"
-          az group delete --name $RESOURCE_GROUP --yes --no-wait || true
-
-          echo "Checking for soft-deleted Key Vault..."
-          RECOVERABLE=$(az keyvault list-deleted --query "[?name=='$KEYVAULT_NAME']" -o tsv || true)
-
-          if [ ! -z "$RECOVERABLE" ]; then
-            echo "Purging soft-deleted Key Vault..."
-            az keyvault purge --name $KEYVAULT_NAME --location $LOCATION || true
-          fi
-
-          echo "Deletion workflow completed."
-          exit 0
-        fi
-
-        # ---------------------------------------------------------
-        # CREATE MODE
-        # ---------------------------------------------------------
         echo "Running CREATE workflow..."
+        echo "Resource Group: $RESOURCE_GROUP"
+        echo "Key Vault: $KEYVAULT_NAME"
 
         # Resource Group
         RG_LOCATION=$(az group show --name $RESOURCE_GROUP --query location -o tsv || true)
         if [ -z "$RG_LOCATION" ]; then
-          echo "Creating Resource Group: $RESOURCE_GROUP"
+          echo "Creating Resource Group: $RESOURCE_GROUP in $LOCATION"
           az group create --name $RESOURCE_GROUP --location $LOCATION
         else
           echo "Resource Group already exists in: $RG_LOCATION"
           LOCATION=$RG_LOCATION
         fi
 
-        # Service Principal
-        echo "Checking for service principal: $SERVICE_PRINCIPAL_NAME..."
-        SP_APPID=$(az ad sp list --display-name $SERVICE_PRINCIPAL_NAME --query "[0].appId" -o tsv || true)
+        # Resolve Service Principal from AZURE_CREDENTIALS
+        CREDS_JSON='${{ secrets.AZURE_CREDENTIALS }}'
+        SP_APPID=$(echo "$CREDS_JSON" | jq -r '.clientId')
 
-        if [ -z "$SP_APPID" ]; then
-          echo "Creating service principal..."
-          SP_OUTPUT=$(az ad sp create-for-rbac \
-            --name $SERVICE_PRINCIPAL_NAME \
-            --role contributor \
-            --scopes /subscriptions/$(az account show --query id -o tsv)/resourceGroups/$RESOURCE_GROUP)
-
-          SP_APPID=$(echo "$SP_OUTPUT" | jq -r '.appId')
+        if [ -z "$SP_APPID" ] || [ "$SP_APPID" = "null" ]; then
+          echo "ERROR: Could not extract clientId from AZURE_CREDENTIALS."
+          exit 1
         fi
 
-        SERVICE_PRINCIPAL_OBJECT_ID=$(az ad sp show --id $SP_APPID --query id -o tsv)
+        SERVICE_PRINCIPAL_OBJECT_ID=$(az ad sp show --id $SP_APPID --query id -o tsv || true)
+
+        if [ -z "$SERVICE_PRINCIPAL_OBJECT_ID" ]; then
+          echo "ERROR: Service principal with appId $SP_APPID not found in AAD."
+          exit 1
+        fi
 
         echo "Using SP Object ID: $SERVICE_PRINCIPAL_OBJECT_ID"
 
-        # Soft-deleted Key Vault
-        RECOVERABLE=$(az keyvault list-deleted --query "[?name=='$KEYVAULT_NAME']" -o tsv || true)
-        if [ ! -z "$RECOVERABLE" ]; then
-          echo "Purging soft-deleted Key Vault..."
-          az keyvault purge --name $KEYVAULT_NAME --location $LOCATION
-          sleep 10
-        fi
+        # Check if Key Vault exists
+        echo "Checking if Key Vault $KEYVAULT_NAME exists..."
+        EXISTING_VAULT=$(az keyvault show --name $KEYVAULT_NAME --query name -o tsv 2>/dev/null || true)
 
-        # Create Key Vault
-        echo "Creating Key Vault: $KEYVAULT_NAME"
-        az keyvault create \
-          --name $KEYVAULT_NAME \
-          --resource-group $RESOURCE_GROUP \
-          --location $LOCATION \
-          --enable-rbac-authorization true
+        if [ -z "$EXISTING_VAULT" ]; then
+          echo "Creating Key Vault: $KEYVAULT_NAME..."
+          az keyvault create \
+            --name $KEYVAULT_NAME \
+            --resource-group $RESOURCE_GROUP \
+            --location $LOCATION \
+            --enable-rbac-authorization true
+        else
+          echo "Key Vault $KEYVAULT_NAME already exists. Skipping creation."
+        fi
 
         VAULT_ID=$(az keyvault show --name $KEYVAULT_NAME --query id -o tsv)
 
-        # RBAC Roles
-        echo "Assigning RBAC roles..."
+        echo "Assigning RBAC roles (idempotent)..."
 
         az role assignment create \
           --role "Key Vault Secrets Officer" \
           --assignee-object-id $SERVICE_PRINCIPAL_OBJECT_ID \
-          --scope $VAULT_ID
+          --scope $VAULT_ID \
+          || echo "Secrets Officer role may already be assigned."
 
         az role assignment create \
           --role "Key Vault Crypto Officer" \
           --assignee-object-id $SERVICE_PRINCIPAL_OBJECT_ID \
-          --scope $VAULT_ID
+          --scope $VAULT_ID \
+          || echo "Crypto Officer role may already be assigned."
 
         az role assignment create \
           --role "Key Vault Certificates Officer" \
           --assignee-object-id $SERVICE_PRINCIPAL_OBJECT_ID \
-          --scope $VAULT_ID
+          --scope $VAULT_ID \
+          || echo "Certificates Officer role may already be assigned."
 
         echo "CREATE workflow completed successfully."
+
+
+  delete:
+    if: ${{ github.event.inputs.mode == 'delete' }}
+    runs-on: ubuntu-latest
+    environment: azure-prod-delete   # <-- stricter env, require approvals
+
+    steps:
+    - name: Validate deletion confirmation
+      shell: bash
+      run: |
+        CONFIRM_DELETE="${{ github.event.inputs.confirmDelete }}"
+        if [ "$CONFIRM_DELETE" != "YES_I_UNDERSTAND" ]; then
+          echo "Deletion NOT confirmed. Set confirmDelete=YES_I_UNDERSTAND to proceed."
+          exit 1
+        fi
+        echo "Deletion confirmed."
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Delete Resource Group (no purge)
+      shell: bash
+      run: |
+        set -e
+
+        RESOURCE_GROUP="${RESOURCE_GROUP}"
+
+        echo "Deleting Resource Group: $RESOURCE_GROUP"
+        az group delete --name $RESOURCE_GROUP --yes --no-wait || true
+
+        echo "NOTE: Key Vault soft-delete retention still applies. Purge is NOT performed by this workflow."
+        echo "DELETE workflow triggered."
