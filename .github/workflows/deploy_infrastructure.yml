@@ -1,4 +1,4 @@
-name: Deploy Azure Infrastructure
+name: Deploy Azure Infrastructure with Cleanup
 
 on:
   push:
@@ -25,25 +25,30 @@ jobs:
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-
-    - name: Ensure Clean Resource Group
+    - name: Create Resource Group
       run: |
-
-
-
-
-        az group delete --name FQCT-ResourceGroup --yes --no-wait || true
         az group create --name FQCT-ResourceGroup --location swedencentral
     - name: Deploy Key Vault
       run: |
         az deployment group create \
           --resource-group FQCT-ResourceGroup \
           --template-file infra/keyvault.bicep \
+          --parameters keyVaultName=FQCT-KeyVault location=swedencentral
 
+  cleanup-on-failure:
+    if: failure()
 
+    runs-on: ubuntu-latest
 
+    steps:
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+    - name: Cleanup Resources
+      run: |
+        az group delete --name FQCT-ResourceGroup --yes --no-wait
+          --parameters keyVaultName=FQCT-KeyVault location=swedencentral
 
-          --parameters keyVaultName=FQCT-KeyVault location=swedencentral \
-          --mode Complete
 
