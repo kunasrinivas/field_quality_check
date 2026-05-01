@@ -27,13 +27,13 @@ jobs:
 
     - name: Create Resource Group
       run: |
-        az group create --name FQCT-ResourceGroup --location swedencentral
+        az group create --name FQCT-ResourceGroup --location eastus
     - name: Deploy Key Vault
       run: |
         az deployment group create \
           --resource-group FQCT-ResourceGroup \
           --template-file infra/keyvault.bicep \
-          --parameters keyVaultName=FQCT-KeyVault location=swedencentral
+          --parameters keyVaultName=FQCT-KeyVault location=eastus
 
   cleanup-on-failure:
     if: failure()
@@ -49,6 +49,4 @@ jobs:
     - name: Cleanup Resources
       run: |
         az group delete --name FQCT-ResourceGroup --yes --no-wait
-          --parameters keyVaultName=FQCT-KeyVault location=swedencentral
-
 
