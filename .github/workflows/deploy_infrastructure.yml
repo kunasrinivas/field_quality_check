@@ -30,6 +30,7 @@ jobs:
         az group create \
           --name FQCT-ResourceGroup \
           --location westeurope
+
     - name: Deploy Key Vault
       run: |
         az deployment group create \
