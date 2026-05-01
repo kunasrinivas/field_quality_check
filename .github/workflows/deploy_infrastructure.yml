@@ -25,6 +25,81 @@ jobs:
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+name: Deploy Azure Infrastructure with Cleanup
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  deploy-azure-infrastructure:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Get Object ID of Service Principal
+      id: sp-objectid
+      run: |
+        echo "Extracting Client ID from AZURE_CREDENTIALS..."
+        CLIENT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r '.clientId')
+        echo "Using Client ID: $CLIENT_ID"
+        OBJECT_ID=$(az ad sp show --id $CLIENT_ID --query objectId -o tsv)
+        if [ -z "$OBJECT_ID" ]; then
+          echo "ERROR: Failed to retrieve Service Principal Object ID."
+          exit 1
+        fi
+        echo "principalObjectId=$OBJECT_ID" >> $GITHUB_ENV
+
+    - name: Create Resource Group
+      run: |
+        az group create --name FQCT-ResourceGroup --location eastus
+
+    - name: Deploy Key Vault
+      run: |
+        az deployment group create \
+          --resource-group FQCT-ResourceGroup \
+          --template-file infra/keyvault.bicep \
+          --parameters keyVaultName=FQCT-KeyVault location=eastus \
+          accessPolicies="[{
+            \"tenantId\": \"${{ secrets.AZURE_TENANT_ID }}\",
+            \"objectId\": \"${{ env.principalObjectId }}\",
+            \"permissions\": {
+              \"keys\": [\"get\", \"list\"],
+              \"secrets\": [\"get\", \"list\"],
+              \"certificates\": []
+            }
+          }]"
+
+  cleanup-on-failure:
+    if: failure()
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Cleanup Resources
+      run: |
+        az group delete --name FQCT-ResourceGroup --yes --no-wait
+
     - name: Get Object ID of Service Principal
       id: sp-objectid
       run: |
