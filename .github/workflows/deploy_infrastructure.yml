@@ -25,6 +25,11 @@ jobs:
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+    - name: Validate AZURE_CREDENTIALS
+      run: |
+        echo "Validating AZURE_CREDENTIALS..."
+        echo '${{ secrets.AZURE_CREDENTIALS }}' | jq
+
     - name: Get Object ID of Service Principal
       id: sp-objectid
       run: |
@@ -32,28 +37,15 @@ jobs:
         CLIENT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r '.clientId')
         echo "Using Client ID: $CLIENT_ID"
 
+        # Check if Service Principal exists
+        az ad sp show --id $CLIENT_ID || (echo "Service Principal does not exist. Exiting..." && exit 1)
+
         # Attempt to fetch object ID
-        OBJECT_ID=$(az ad sp show --id $CLIENT_ID --query objectId -o tsv || true)
-
+        OBJECT_ID=$(az ad sp show --id $CLIENT_ID --query objectId -o tsv)
         if [ -z "$OBJECT_ID" ]; then
-          echo "ERROR: Could not fetch object ID using direct query. Attempting fallback lookup..."
-          RESOURCE=$(az resource list --query "[?appId=='$CLIENT_ID']" -o json)
-
-          # Validate fallback result
-          if [ -z "$RESOURCE" ]; then
-            echo "ERROR: No matching resource found for client ID during fallback lookup."
-            exit 1
-          fi
-
-          RESOURCE_ID=$(echo "$RESOURCE" | jq -r '.[0].id')
-          OBJECT_ID=$(az ad sp show --id $RESOURCE_ID --query objectId -o tsv || true)
-        fi
-
-        if [ -z "$OBJECT_ID" ]; then
-          echo "ERROR: Failed to retrieve Service Principal Object ID after fallback."
+          echo "ERROR: Failed to retrieve Service Principal Object ID."
           exit 1
         fi
-
         echo "principalObjectId=$OBJECT_ID" >> $GITHUB_ENV
 
     - name: Create Resource Group
