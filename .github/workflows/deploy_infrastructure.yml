@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # Enforce Node.js 24 runtime
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   deploy-azure-infrastructure:
@@ -27,13 +27,14 @@ jobs:
 
     - name: Create Resource Group
       run: |
-        az group create --name FQCT-ResourceGroup --location eastus
+        az group create --name FQCT-ResourceGroup --location westeurope
+
     - name: Deploy Key Vault
       run: |
         az deployment group create \
           --resource-group FQCT-ResourceGroup \
           --template-file infra/keyvault.bicep \
-          --parameters keyVaultName=FQCT-KeyVault location=eastus
+          --parameters keyVaultName=FQCT-KeyVault location=westeurope
 
   cleanup-on-failure:
     if: failure()
@@ -49,4 +50,3 @@ jobs:
     - name: Cleanup Resources
       run: |
         az group delete --name FQCT-ResourceGroup --yes --no-wait
-

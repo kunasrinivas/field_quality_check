@@ -1,11 +1,10 @@
 @description('Name of the Azure Key Vault')
 param keyVaultName string
 
-@description('The Azure region for Key Vault')
-param location string = 'eastus' // Set to West Europe for GDPR compliance
+@description('The Azure region for Key Vault (GDPR-compliant default)')
+param location string = 'westeurope'
 
-// Provision Azure Key Vault
-resource keyVault 'Microsoft.KeyVault/vaults@2021-11-01' = {
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: keyVaultName
   location: location
   properties: {
@@ -15,6 +14,6 @@ resource keyVault 'Microsoft.KeyVault/vaults@2021-11-01' = {
     }
     tenantId: subscription().tenantId
     softDeleteRetentionInDays: 90
-    enableSoftDelete: true
+    enablePurgeProtection: true
   }
 }
