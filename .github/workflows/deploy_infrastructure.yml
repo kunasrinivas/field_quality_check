@@ -31,11 +31,21 @@ jobs:
         echo "Extracting Client ID from AZURE_CREDENTIALS..."
         CLIENT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r '.clientId')
         echo "Using Client ID: $CLIENT_ID"
-        OBJECT_ID=$(az ad sp show --id $CLIENT_ID --query objectId -o tsv)
+
+        # Attempt to fetch object ID
+        OBJECT_ID=$(az ad sp show --id $CLIENT_ID --query objectId -o tsv || true)
+
         if [ -z "$OBJECT_ID" ]; then
-          echo "ERROR: Failed to retrieve Service Principal Object ID."
+          echo "Fallback: Attempting resource lookup..."
+          RESOURCE_ID=$(az resource list --query "[?appId=='$CLIENT_ID'].id" -o tsv)
+          OBJECT_ID=$(az ad sp show --id $RESOURCE_ID --query objectId -o tsv || true)
+        fi
+
+        if [ -z "$OBJECT_ID" ]; then
+          echo "ERROR: Failed to retrieve Service Principal Object ID after fallback."
           exit 1
         fi
+
         echo "principalObjectId=$OBJECT_ID" >> $GITHUB_ENV
 
     - name: Create Resource Group
@@ -72,5 +82,4 @@ jobs:
     - name: Cleanup Resources
       run: |
         az group delete --name FQCT-ResourceGroup --yes --no-wait
-
 
