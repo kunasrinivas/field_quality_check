@@ -1,0 +1,6 @@
+{
+  "parameters": {
+    "location": "westeurope",
+    "storageAccountName": "fqcstoragedev"
+  }
+}
