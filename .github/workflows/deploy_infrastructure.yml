@@ -1,85 +1,129 @@
-name: Deploy Azure Infrastructure with Cleanup
+name: Manage Azure Resources (Create or Delete)
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Choose 'create' or 'delete'"
+        required: true
+        type: choice
+        options:
+          - create
+          - delete
 
 permissions:
   id-token: write
   contents: read
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
-  deploy-azure-infrastructure:
+  manage:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Repository
+    - name: Checkout repository
       uses: actions/checkout@v3
 
-    - name: Login to Azure
+    - name: Azure Login
       uses: azure/login@v1
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    - name: Validate AZURE_CREDENTIALS
+    - name: Execute Create/Delete Logic
+      shell: bash
       run: |
-        echo "Validating AZURE_CREDENTIALS..."
-        echo '${{ secrets.AZURE_CREDENTIALS }}' | jq
+        set -e
 
-    - name: Get Object ID of Service Principal
-      id: sp-objectid
-      run: |
-        echo "Extracting Client ID from AZURE_CREDENTIALS..."
-        CLIENT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r '.clientId')
-        echo "Using Client ID: $CLIENT_ID"
+        MODE="${{ github.event.inputs.mode }}"
+        RESOURCE_GROUP="FQCT-ResourceGroup"
+        LOCATION="westeurope"
+        KEYVAULT_NAME="fqct-kv-main"   # stable name for reuse
+        SERVICE_PRINCIPAL_NAME="KeyVaultSP"
 
-        # Check if Service Principal exists
-        az ad sp show --id $CLIENT_ID || (echo "Service Principal does not exist. Exiting..." && exit 1)
+        echo "Selected mode: $MODE"
 
-        # Attempt to fetch object ID
-        OBJECT_ID=$(az ad sp show --id $CLIENT_ID --query objectId -o tsv)
-        if [ -z "$OBJECT_ID" ]; then
-          echo "ERROR: Failed to retrieve Service Principal Object ID."
-          exit 1
+        if [ "$MODE" = "delete" ]; then
+          echo "Deleting Resource Group: $RESOURCE_GROUP"
+          az group delete --name $RESOURCE_GROUP --yes --no-wait || true
+
+          echo "Checking for soft-deleted Key Vault..."
+          RECOVERABLE=$(az keyvault list-deleted --query "[?name=='$KEYVAULT_NAME']" -o tsv || true)
+
+          if [ ! -z "$RECOVERABLE" ]; then
+            echo "Purging soft-deleted Key Vault..."
+            az keyvault purge --name $KEYVAULT_NAME --location $LOCATION || true
+          fi
+
+          echo "Deletion workflow completed."
+          exit 0
         fi
-        echo "principalObjectId=$OBJECT_ID" >> $GITHUB_ENV
 
-    - name: Create Resource Group
-      run: |
-        az group create --name FQCT-ResourceGroup --location eastus
+        # ---------------------------------------------------------
+        # CREATE MODE
+        # ---------------------------------------------------------
+        echo "Running CREATE workflow..."
 
-    - name: Deploy Key Vault
-      run: |
-        az deployment group create \
-          --resource-group FQCT-ResourceGroup \
-          --template-file infra/keyvault.bicep \
-          --parameters keyVaultName=FQCT-KeyVault location=eastus \
-          accessPolicies="[{
-            \"tenantId\": \"${{ secrets.AZURE_TENANT_ID }}\",
-            \"objectId\": \"${{ env.principalObjectId }}\",
-            \"permissions\": {
-              \"keys\": [\"get\", \"list\"],
-              \"secrets\": [\"get\", \"list\"],
-              \"certificates\": []
-            }
-          }]"
+        # Resource Group
+        RG_LOCATION=$(az group show --name $RESOURCE_GROUP --query location -o tsv || true)
+        if [ -z "$RG_LOCATION" ]; then
+          echo "Creating Resource Group: $RESOURCE_GROUP"
+          az group create --name $RESOURCE_GROUP --location $LOCATION
+        else
+          echo "Resource Group already exists in: $RG_LOCATION"
+          LOCATION=$RG_LOCATION
+        fi
 
-  cleanup-on-failure:
-    if: failure()
+        # Service Principal
+        echo "Checking for service principal: $SERVICE_PRINCIPAL_NAME..."
+        SP_APPID=$(az ad sp list --display-name $SERVICE_PRINCIPAL_NAME --query "[0].appId" -o tsv || true)
 
-    runs-on: ubuntu-latest
+        if [ -z "$SP_APPID" ]; then
+          echo "Creating service principal..."
+          SP_OUTPUT=$(az ad sp create-for-rbac \
+            --name $SERVICE_PRINCIPAL_NAME \
+            --role contributor \
+            --scopes /subscriptions/$(az account show --query id -o tsv)/resourceGroups/$RESOURCE_GROUP)
 
-    steps:
-    - name: Login to Azure
-      uses: azure/login@v1
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
+          SP_APPID=$(echo "$SP_OUTPUT" | jq -r '.appId')
+        fi
 
-    - name: Cleanup Resources
-      run: |
-        az group delete --name FQCT-ResourceGroup --yes --no-wait
+        SERVICE_PRINCIPAL_OBJECT_ID=$(az ad sp show --id $SP_APPID --query id -o tsv)
 
+        echo "Using SP Object ID: $SERVICE_PRINCIPAL_OBJECT_ID"
+
+        # Soft-deleted Key Vault
+        RECOVERABLE=$(az keyvault list-deleted --query "[?name=='$KEYVAULT_NAME']" -o tsv || true)
+        if [ ! -z "$RECOVERABLE" ]; then
+          echo "Purging soft-deleted Key Vault..."
+          az keyvault purge --name $KEYVAULT_NAME --location $LOCATION
+          sleep 10
+        fi
+
+        # Create Key Vault
+        echo "Creating Key Vault: $KEYVAULT_NAME"
+        az keyvault create \
+          --name $KEYVAULT_NAME \
+          --resource-group $RESOURCE_GROUP \
+          --location $LOCATION \
+          --enable-rbac-authorization true
+
+        VAULT_ID=$(az keyvault show --name $KEYVAULT_NAME --query id -o tsv)
+
+        # RBAC Roles
+        echo "Assigning RBAC roles..."
+
+        az role assignment create \
+          --role "Key Vault Secrets Officer" \
+          --assignee-object-id $SERVICE_PRINCIPAL_OBJECT_ID \
+          --scope $VAULT_ID
+
+        az role assignment create \
+          --role "Key Vault Crypto Officer" \
+          --assignee-object-id $SERVICE_PRINCIPAL_OBJECT_ID \
+          --scope $VAULT_ID
+
+        az role assignment create \
+          --role "Key Vault Certificates Officer" \
+          --assignee-object-id $SERVICE_PRINCIPAL_OBJECT_ID \
+          --scope $VAULT_ID
+
+        echo "CREATE workflow completed successfully."
