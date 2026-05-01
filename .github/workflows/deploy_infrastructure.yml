@@ -36,8 +36,16 @@ jobs:
         OBJECT_ID=$(az ad sp show --id $CLIENT_ID --query objectId -o tsv || true)
 
         if [ -z "$OBJECT_ID" ]; then
-          echo "Fallback: Attempting resource lookup..."
-          RESOURCE_ID=$(az resource list --query "[?appId=='$CLIENT_ID'].id" -o tsv)
+          echo "ERROR: Could not fetch object ID using direct query. Attempting fallback lookup..."
+          RESOURCE=$(az resource list --query "[?appId=='$CLIENT_ID']" -o json)
+
+          # Validate fallback result
+          if [ -z "$RESOURCE" ]; then
+            echo "ERROR: No matching resource found for client ID during fallback lookup."
+            exit 1
+          fi
+
+          RESOURCE_ID=$(echo "$RESOURCE" | jq -r '.[0].id')
           OBJECT_ID=$(az ad sp show --id $RESOURCE_ID --query objectId -o tsv || true)
         fi
 
