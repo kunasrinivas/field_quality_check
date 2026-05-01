@@ -9,8 +9,11 @@ permissions:
   id-token: write
   contents: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # Force Node.js 24 usage for GitHub Actions
+
 jobs:
-  build:
+  deploy-azure-infrastructure:
     runs-on: ubuntu-latest
 
     steps:
