@@ -28,7 +28,7 @@ jobs:
     - name: Get Object ID of Service Principal
       id: sp-objectid
       run: |
-        OBJECT_ID=$(az ad signed-in-user show --query objectId -o tsv)
+        OBJECT_ID=$(az ad sp show --id ${{ secrets.AZURE_CLIENT_ID }} --query objectId -o tsv)
         echo "principalObjectId=$OBJECT_ID" >> $GITHUB_ENV
 
     - name: Create Resource Group
@@ -63,15 +63,6 @@ jobs:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
     - name: Cleanup Resources
-      run: |
-        az group delete --name FQCT-ResourceGroup --yes --no-wait
-
-
-
-
-        az group create --name FQCT-ResourceGroup --location eastus
-
-    - name: Deploy Key Vault
       run: |
         az group delete --name FQCT-ResourceGroup --yes --no-wait
 
