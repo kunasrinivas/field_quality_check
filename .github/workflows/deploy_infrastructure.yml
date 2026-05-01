@@ -1,4 +1,4 @@
-name: Manage Azure Resources (Locked Down)
+name: Deploy Azure Infrastructure
 
 on:
   workflow_dispatch:
@@ -23,12 +23,13 @@ env:
   RESOURCE_GROUP: FQCT-ResourceGroup
   LOCATION: westeurope
   KEYVAULT_NAME: fqct-kv-main
+  INFRA_TEMPLATE: infra/main.bicep
+  INFRA_PARAMS: infra/parameters/dev.json
 
 jobs:
-  create:
-    if: ${{ github.event.inputs.mode == 'create' }}
+  deploy:
     runs-on: ubuntu-latest
-    environment: azure-prod   # <-- protect this env in GitHub
+    environment: azure-prod
 
     steps:
     - name: Checkout repository
@@ -39,30 +40,42 @@ jobs:
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    - name: Create / Update Azure Resources
-      shell: bash
+    - name: Validate workflow inputs
       run: |
-        set -e
-
-        RESOURCE_GROUP="${RESOURCE_GROUP}"
-        LOCATION="${LOCATION}"
-        KEYVAULT_NAME="${KEYVAULT_NAME}"
-
-        echo "Running CREATE workflow..."
-        echo "Resource Group: $RESOURCE_GROUP"
-        echo "Key Vault: $KEYVAULT_NAME"
-
-        # Resource Group
-        RG_LOCATION=$(az group show --name $RESOURCE_GROUP --query location -o tsv || true)
-        if [ -z "$RG_LOCATION" ]; then
-          echo "Creating Resource Group: $RESOURCE_GROUP in $LOCATION"
-          az group create --name $RESOURCE_GROUP --location $LOCATION
-        else
-          echo "Resource Group already exists in: $RG_LOCATION"
-          LOCATION=$RG_LOCATION
+        if [[ "${{ github.event.inputs.mode }}" != "create" && "${{ github.event.inputs.mode }}" != "delete" ]]; then
+          echo "ERROR: Invalid mode provided. Must be 'create' or 'delete'."
+          exit 1
         fi
 
-        # Resolve Service Principal from AZURE_CREDENTIALS
+    - name: Create Resource Group
+      if: ${{ github.event.inputs.mode == 'create' }}
+      run: |
+        set -e
+        RG_LOCATION=$(az group show --name "$RESOURCE_GROUP" --query location -o tsv 2>/dev/null || true)
+        if [ -z "$RG_LOCATION" ]; then
+          echo "Creating Resource Group: $RESOURCE_GROUP in $LOCATION"
+          az group create --name "$RESOURCE_GROUP" --location "$LOCATION"
+        else
+          echo "Resource Group already exists in: $RG_LOCATION"
+          echo "LOCATION=$RG_LOCATION" >> $GITHUB_ENV
+        fi
+
+    - name: Deploy Infrastructure via Bicep
+      if: ${{ github.event.inputs.mode == 'create' }}
+      run: |
+        set -e
+        echo "Deploying infrastructure via Bicep (storage + key vault)..."
+        az deployment group create \
+          --resource-group "$RESOURCE_GROUP" \
+          --template-file "$INFRA_TEMPLATE" \
+          --parameters @"$INFRA_PARAMS" \
+          --mode Incremental
+        echo "Infrastructure deployment complete."
+
+    - name: Assign Key Vault RBAC Roles
+      if: ${{ github.event.inputs.mode == 'create' }}
+      run: |
+        set -e
         CREDS_JSON='${{ secrets.AZURE_CREDENTIALS }}'
         SP_APPID=$(echo "$CREDS_JSON" | jq -r '.clientId')
 
@@ -71,85 +84,44 @@ jobs:
           exit 1
         fi
 
-        SERVICE_PRINCIPAL_OBJECT_ID=$(az ad sp show --id $SP_APPID --query id -o tsv || true)
-
+        SERVICE_PRINCIPAL_OBJECT_ID=$(az ad sp show --id "$SP_APPID" --query id -o tsv 2>/dev/null || true)
         if [ -z "$SERVICE_PRINCIPAL_OBJECT_ID" ]; then
-          echo "ERROR: Service principal with appId $SP_APPID not found in AAD."
+          echo "ERROR: Service principal $SP_APPID not found in AAD."
           exit 1
         fi
-
         echo "Using SP Object ID: $SERVICE_PRINCIPAL_OBJECT_ID"
 
-        # Check if Key Vault exists
-        echo "Checking if Key Vault $KEYVAULT_NAME exists..."
-        EXISTING_VAULT=$(az keyvault show --name $KEYVAULT_NAME --query name -o tsv 2>/dev/null || true)
-
-        if [ -z "$EXISTING_VAULT" ]; then
-          echo "Creating Key Vault: $KEYVAULT_NAME..."
-          az keyvault create \
-            --name $KEYVAULT_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --location $LOCATION \
-            --enable-rbac-authorization true
-        else
-          echo "Key Vault $KEYVAULT_NAME already exists. Skipping creation."
-        fi
-
-        VAULT_ID=$(az keyvault show --name $KEYVAULT_NAME --query id -o tsv)
-
-        echo "Assigning RBAC roles (idempotent)..."
+        VAULT_ID=$(az keyvault show --name "$KEYVAULT_NAME" --query id -o tsv)
 
         az role assignment create \
           --role "Key Vault Secrets Officer" \
-          --assignee-object-id $SERVICE_PRINCIPAL_OBJECT_ID \
-          --scope $VAULT_ID \
+          --assignee-object-id "$SERVICE_PRINCIPAL_OBJECT_ID" \
+          --scope "$VAULT_ID" \
           || echo "Secrets Officer role may already be assigned."
 
         az role assignment create \
           --role "Key Vault Crypto Officer" \
-          --assignee-object-id $SERVICE_PRINCIPAL_OBJECT_ID \
-          --scope $VAULT_ID \
+          --assignee-object-id "$SERVICE_PRINCIPAL_OBJECT_ID" \
+          --scope "$VAULT_ID" \
           || echo "Crypto Officer role may already be assigned."
 
         az role assignment create \
           --role "Key Vault Certificates Officer" \
-          --assignee-object-id $SERVICE_PRINCIPAL_OBJECT_ID \
-          --scope $VAULT_ID \
+          --assignee-object-id "$SERVICE_PRINCIPAL_OBJECT_ID" \
+          --scope "$VAULT_ID" \
           || echo "Certificates Officer role may already be assigned."
 
         echo "CREATE workflow completed successfully."
 
-
-  delete:
-    if: ${{ github.event.inputs.mode == 'delete' }}
-    runs-on: ubuntu-latest
-    environment: azure-prod-delete   # <-- stricter env, require approvals
-
-    steps:
-    - name: Validate deletion confirmation
-      shell: bash
+    - name: Delete Infrastructure
+      if: ${{ github.event.inputs.mode == 'delete' }}
       run: |
+        set -e
         CONFIRM_DELETE="${{ github.event.inputs.confirmDelete }}"
         if [ "$CONFIRM_DELETE" != "YES_I_UNDERSTAND" ]; then
           echo "Deletion NOT confirmed. Set confirmDelete=YES_I_UNDERSTAND to proceed."
           exit 1
         fi
-        echo "Deletion confirmed."
-
-    - name: Azure Login
-      uses: azure/login@v1
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-    - name: Delete Resource Group (no purge)
-      shell: bash
-      run: |
-        set -e
-
-        RESOURCE_GROUP="${RESOURCE_GROUP}"
-
         echo "Deleting Resource Group: $RESOURCE_GROUP"
-        az group delete --name $RESOURCE_GROUP --yes --no-wait || true
-
+        az group delete --name "$RESOURCE_GROUP" --yes --no-wait || true
         echo "NOTE: Key Vault soft-delete retention still applies. Purge is NOT performed by this workflow."
-        echo "DELETE workflow triggered."
