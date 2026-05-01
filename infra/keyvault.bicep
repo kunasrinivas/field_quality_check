@@ -2,7 +2,7 @@
 param keyVaultName string
 
 @description('The Azure region for Key Vault')
-param location string = 'westeurope' // Set to West Europe for GDPR compliance
+param location string = 'swedencentral' // Set to West Europe for GDPR compliance
 
 // Provision Azure Key Vault
 resource keyVault 'Microsoft.KeyVault/vaults@2021-11-01' = {

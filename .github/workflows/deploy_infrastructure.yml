@@ -25,16 +25,25 @@ jobs:
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    - name: Create Resource Group
-      run: |
-        az group create \
-          --name FQCT-ResourceGroup \
-          --location westeurope
 
+    - name: Ensure Clean Resource Group
+      run: |
+
+
+
+
+        az group delete --name FQCT-ResourceGroup --yes --no-wait || true
+        az group create --name FQCT-ResourceGroup --location swedencentral
     - name: Deploy Key Vault
       run: |
         az deployment group create \
           --resource-group FQCT-ResourceGroup \
           --template-file infra/keyvault.bicep \
-          --parameters keyVaultName=FQCT-KeyVault location=westeurope
+
+
+
+
+
+          --parameters keyVaultName=FQCT-KeyVault location=swedencentral \
+          --mode Complete
 
