@@ -1,0 +1,36 @@
+name: Deploy Azure Infrastructure
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+    - name: Deploy Resource Group
+      run: |
+        az deployment sub create \
+          --location westeurope \
+          --template-file infra/resource_group.bicep \
+          --parameters resourceGroupName=FQCT-ResourceGroup location=westeurope
+
+    - name: Deploy Key Vault
+      run: |
+        az deployment group create \
+          --resource-group FQCT-ResourceGroup \
+          --template-file infra/keyvault.bicep \
+          --parameters keyVaultName=FQCT-KeyVault location=westeurope
