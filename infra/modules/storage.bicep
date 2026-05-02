@@ -9,8 +9,7 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2022-09-01' = {
   location: location
   kind: 'StorageV2'
   sku: {
-    name: 'Standard_LRS' // Locally redundant storage
-    tier: 'Standard'
+    name: 'Standard_LRS'
   }
   properties: {
     allowBlobPublicAccess: false
@@ -25,9 +24,6 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2022-09-01' = {
 
 resource rawEvidenceContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2022-09-01' = {
   name: '${storageAccount.name}/default/raw-evidence'
-  dependsOn: [
-    storageAccount
-  ]
   properties: {
     publicAccess: 'None'
   }
@@ -35,9 +31,6 @@ resource rawEvidenceContainer 'Microsoft.Storage/storageAccounts/blobServices/co
 
 resource processedEvidenceContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2022-09-01' = {
   name: '${storageAccount.name}/default/processed-evidence'
-  dependsOn: [
-    storageAccount
-  ]
   properties: {
     publicAccess: 'None'
   }

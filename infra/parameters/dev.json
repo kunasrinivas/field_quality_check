@@ -10,6 +10,9 @@
     },
     "sqlAdminLogin": {
       "value": "fqctadmin"
+    },
+    "sqlLocation": {
+      "value": "northeurope"
     }
   }
 }

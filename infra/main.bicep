@@ -1,6 +1,9 @@
 @description('Azure region for all resources')
 param location string = 'westeurope'
 
+@description('Azure region for SQL Server — westeurope has provisioning restrictions in some subscriptions')
+param sqlLocation string = 'northeurope'
+
 @description('Deterministic unique suffix derived from the resource group ID — reused across all globally-scoped resource names')
 param resourceSuffix string = uniqueString(resourceGroup().id)
 
@@ -46,7 +49,7 @@ module keyVault './modules/keyvault.bicep' = {
 module sql './modules/sql.bicep' = {
   name: 'SqlDeployment'
   params: {
-    location: location
+    location: sqlLocation
     sqlServerName: sqlServerName
     sqlDatabaseName: sqlDatabaseName
     administratorLogin: sqlAdminLogin
