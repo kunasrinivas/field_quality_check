@@ -139,7 +139,8 @@ jobs:
         echo "SQL Server FQDN  : $(echo "$OUTPUTS" | jq -r '.sqlServerFqdn.value')"
         echo "Cosmos DB account: $(echo "$OUTPUTS" | jq -r '.cosmosAccountName.value')"
         echo "Function App     : $(echo "$OUTPUTS" | jq -r '.functionAppName.value')"
-        echo "APIM Gateway URL : $(echo "$OUTPUTS" | jq -r '.apimGatewayUrl.value')"
+        APIM_URL=$(echo "$OUTPUTS" | jq -r '.apimGatewayUrl.value // "APIM not deployed (set APIM_PUBLISHER_EMAIL secret to enable)"')
+        echo "APIM Gateway URL : $APIM_URL"
 
         # Propagate Key Vault name to subsequent steps
         echo "KEYVAULT_NAME=$(echo "$OUTPUTS" | jq -r '.keyVaultName.value')" >> "$GITHUB_ENV"

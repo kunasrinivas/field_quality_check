@@ -107,5 +107,5 @@ output sqlServerFqdn        string = sql.outputs.sqlServerFqdn
 output cosmosAccountName    string = cosmosAccountName
 output functionAppName      string = functions.outputs.functionAppName
 output functionAppHostname  string = functions.outputs.functionAppHostname
-#disable-next-line BCP318
-output apimGatewayUrl       string = deployApim ? apim.outputs!.apimGatewayUrl : 'APIM not deployed — set APIM_PUBLISHER_EMAIL secret to enable'
+// apimGatewayUrl is only output when APIM is deployed — ARM cannot safely evaluate
+// a conditional module output as a typed string when the module may not have run.
