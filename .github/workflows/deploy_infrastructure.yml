@@ -1,52 +1,138 @@
-name: Deploy Azure Infrastructure with Cleanup
+name: Deploy Azure Infrastructure
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Choose 'create' or 'delete'"
+        required: true
+        type: choice
+        options:
+          - create
+          - delete
+      confirmDelete:
+        description: "Type 'YES_I_UNDERSTAND' to confirm deletion (required when mode=delete)"
+        required: false
+        default: ""
 
 permissions:
   id-token: write
   contents: read
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # Enforce Node.js 24 runtime
+  RESOURCE_GROUP: fqct-rg-dev
+  LOCATION: westeurope
+  KEYVAULT_NAME: fqct-kv-dev
+  INFRA_TEMPLATE: infra/main.bicep
+  INFRA_PARAMS: infra/parameters/dev.json
+  DEPLOY_NAME: fqct-deployment
 
 jobs:
-  deploy-azure-infrastructure:
+  deploy:
     runs-on: ubuntu-latest
+    environment: azure-prod
 
     steps:
-    - name: Checkout Repository
+    - name: Checkout repository
       uses: actions/checkout@v3
 
-    - name: Login to Azure
+    - name: Azure Login
       uses: azure/login@v1
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Validate workflow inputs
+      run: |
+        if [[ "${{ github.event.inputs.mode }}" != "create" && "${{ github.event.inputs.mode }}" != "delete" ]]; then
+          echo "ERROR: Invalid mode provided. Must be 'create' or 'delete'."
+          exit 1
+        fi
 
     - name: Create Resource Group
+      if: ${{ github.event.inputs.mode == 'create' }}
       run: |
-        az group create --name FQCT-ResourceGroup --location eastus
-    - name: Deploy Key Vault
+        set -e
+        RG_LOCATION=$(az group show --name "$RESOURCE_GROUP" --query location -o tsv 2>/dev/null || true)
+        if [ -z "$RG_LOCATION" ]; then
+          echo "Creating Resource Group: $RESOURCE_GROUP in $LOCATION"
+          az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
+        else
+          echo "Resource Group already exists in: $RG_LOCATION"
+          echo "LOCATION=$RG_LOCATION" >> $GITHUB_ENV
+        fi
+
+    - name: Deploy Infrastructure via Bicep
+      if: ${{ github.event.inputs.mode == 'create' }}
       run: |
+        set -e
+        echo "Deploying infrastructure (storage + key vault)..."
         az deployment group create \
-          --resource-group FQCT-ResourceGroup \
-          --template-file infra/keyvault.bicep \
-          --parameters keyVaultName=FQCT-KeyVault location=eastus
+          --name "$DEPLOY_NAME" \
+          --resource-group "$RESOURCE_GROUP" \
+          --template-file "$INFRA_TEMPLATE" \
+          --parameters @"$INFRA_PARAMS" \
+          --mode Incremental \
+          --output none
 
-  cleanup-on-failure:
-    if: failure()
+        STORAGE_NAME=$(az deployment group show \
+          --name "$DEPLOY_NAME" \
+          --resource-group "$RESOURCE_GROUP" \
+          --query "properties.outputs.storageAccountName.value" -o tsv)
+        echo "Storage account deployed: $STORAGE_NAME"
+        echo "Infrastructure deployment complete."
 
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Login to Azure
-      uses: azure/login@v1
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-    - name: Cleanup Resources
+    - name: Assign Key Vault RBAC Roles
+      if: ${{ github.event.inputs.mode == 'create' }}
       run: |
-        az group delete --name FQCT-ResourceGroup --yes --no-wait
+        set -e
+        CREDS_JSON='${{ secrets.AZURE_CREDENTIALS }}'
+        SP_APPID=$(echo "$CREDS_JSON" | jq -r '.clientId')
 
+        if [ -z "$SP_APPID" ] || [ "$SP_APPID" = "null" ]; then
+          echo "ERROR: Could not extract clientId from AZURE_CREDENTIALS."
+          exit 1
+        fi
+
+        SERVICE_PRINCIPAL_OBJECT_ID=$(az ad sp show --id "$SP_APPID" --query id -o tsv 2>/dev/null || true)
+        if [ -z "$SERVICE_PRINCIPAL_OBJECT_ID" ]; then
+          echo "ERROR: Service principal not found in AAD."
+          exit 1
+        fi
+
+        VAULT_ID=$(az keyvault show --name "$KEYVAULT_NAME" --query id -o tsv)
+
+        az role assignment create \
+          --role "Key Vault Secrets Officer" \
+          --assignee-object-id "$SERVICE_PRINCIPAL_OBJECT_ID" \
+          --scope "$VAULT_ID" \
+          --output none \
+          || echo "Secrets Officer role may already be assigned."
+
+        az role assignment create \
+          --role "Key Vault Crypto Officer" \
+          --assignee-object-id "$SERVICE_PRINCIPAL_OBJECT_ID" \
+          --scope "$VAULT_ID" \
+          --output none \
+          || echo "Crypto Officer role may already be assigned."
+
+        az role assignment create \
+          --role "Key Vault Certificates Officer" \
+          --assignee-object-id "$SERVICE_PRINCIPAL_OBJECT_ID" \
+          --scope "$VAULT_ID" \
+          --output none \
+          || echo "Certificates Officer role may already be assigned."
+
+        echo "Key Vault RBAC roles assigned successfully."
+
+    - name: Delete Infrastructure
+      if: ${{ github.event.inputs.mode == 'delete' }}
+      run: |
+        set -e
+        CONFIRM_DELETE="${{ github.event.inputs.confirmDelete }}"
+        if [ "$CONFIRM_DELETE" != "YES_I_UNDERSTAND" ]; then
+          echo "Deletion NOT confirmed. Set confirmDelete=YES_I_UNDERSTAND to proceed."
+          exit 1
+        fi
+        echo "Deleting Resource Group: $RESOURCE_GROUP"
+        az group delete --name "$RESOURCE_GROUP" --yes --no-wait --output none || true
+        echo "NOTE: Key Vault soft-delete retention still applies. Purge is NOT performed by this workflow."
