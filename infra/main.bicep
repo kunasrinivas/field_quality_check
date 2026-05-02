@@ -7,6 +7,9 @@ param sqlLocation string = 'northeurope'
 @description('Azure region for Cosmos DB — westeurope has capacity constraints for zonal redundant accounts')
 param cosmosLocation string = 'northeurope'
 
+@description('Azure region for Azure AI Vision — northeurope and westeurope both supported')
+param visionLocation string = 'northeurope'
+
 @description('Deterministic unique suffix derived from the resource group ID — reused across all globally-scoped resource names')
 param resourceSuffix string = uniqueString(resourceGroup().id)
 
@@ -27,6 +30,7 @@ var keyVaultName         = 'fqct-kv-${take(resourceSuffix, 8)}'
 var sqlServerName        = 'fqct-sql-${take(resourceSuffix, 8)}'
 var sqlDatabaseName      = 'fqct-db-dev'
 var cosmosAccountName    = 'fqct-cosmos-${take(resourceSuffix, 8)}'
+var visionName           = 'fqct-vision-${take(resourceSuffix, 8)}'
 var functionAppName      = 'fqct-func-${take(resourceSuffix, 8)}'
 var funcStorageName      = 'fqctfnstg${take(resourceSuffix, 8)}'
 var planName             = 'fqct-plan-dev'
@@ -68,10 +72,17 @@ module cosmos './modules/cosmosdb.bicep' = {
   }
 }
 
+module vision './modules/vision.bicep' = {
+  name: 'VisionDeployment'
+  params: {
+    location: visionLocation
+    visionName: visionName
+  }
+}
+
 // Functions depends on storage (implicit via output ref), sql (implicit via output ref),
-// and cosmos (explicit dependsOn — cosmosAccountName is a string so ARM can't infer it).
-// Without dependsOn, ARM deploys Functions and Cosmos in parallel and listConnectionStrings()
-// fires before Cosmos reaches running state.
+// cosmos (explicit dependsOn — cosmosAccountName is a string so ARM can't infer it),
+// and vision (implicit via visionEndpoint output ref).
 module functions './modules/functions.bicep' = {
   name: 'FunctionsDeployment'
   dependsOn: [cosmos]
@@ -86,6 +97,8 @@ module functions './modules/functions.bicep' = {
     sqlDatabaseName: sql.outputs.sqlDatabaseName
     sqlAdminLogin: sqlAdminLogin
     sqlAdminPassword: sqlAdminPassword
+    visionEndpoint: vision.outputs.visionEndpoint
+    visionAccountName: vision.outputs.visionAccountName
   }
 }
 
@@ -105,7 +118,8 @@ output storageAccountName  string = storageAccountName
 output keyVaultName         string = keyVault.outputs.keyVaultName
 output sqlServerFqdn        string = sql.outputs.sqlServerFqdn
 output cosmosAccountName    string = cosmosAccountName
+output visionEndpoint       string = vision.outputs.visionEndpoint
 output functionAppName      string = functions.outputs.functionAppName
 output functionAppHostname  string = functions.outputs.functionAppHostname
-// apimGatewayUrl is only output when APIM is deployed — ARM cannot safely evaluate
+// apimGatewayUrl omitted when APIM is conditional — ARM cannot safely evaluate
 // a conditional module output as a typed string when the module may not have run.

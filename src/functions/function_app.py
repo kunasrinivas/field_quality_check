@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 import azure.functions as func
@@ -17,6 +18,10 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 # ---------------------------------------------------------------------------
 _blob_service: Optional[BlobServiceClient] = None
 _cosmos_client: Optional[CosmosClient] = None
+_vision_client = None
+
+# Only process image files — video is out of scope for this POC.
+_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.tif', '.webp'}
 
 
 def _blob_svc() -> BlobServiceClient:
@@ -41,6 +46,18 @@ def _cosmos_container(name: str):
     )
 
 
+def _vision():
+    global _vision_client
+    if _vision_client is None:
+        from azure.ai.vision.imageanalysis import ImageAnalysisClient
+        from azure.core.credentials import AzureKeyCredential
+        _vision_client = ImageAnalysisClient(
+            endpoint=os.environ["VISION_ENDPOINT"],
+            credential=AzureKeyCredential(os.environ["VISION_KEY"]),
+        )
+    return _vision_client
+
+
 def _sql_conn() -> pyodbc.Connection:
     """New connection per invocation — pyodbc connections are not thread-safe."""
     return pyodbc.connect(os.environ["SQL_CONNECTION"], autocommit=False)
@@ -58,9 +75,12 @@ def _json_err(message: str, status: int = 400) -> func.HttpResponse:
     )
 
 
+def _is_image(filename: str) -> bool:
+    return os.path.splitext(filename.lower())[1] in _IMAGE_EXTENSIONS
+
+
 # ---------------------------------------------------------------------------
 # SQL bootstrap — creates the invoices table on first use if absent.
-# Production environments should use proper migration tooling instead.
 # ---------------------------------------------------------------------------
 _ENSURE_INVOICES_TABLE = """
 IF OBJECT_ID('dbo.invoices', 'U') IS NULL
@@ -83,7 +103,7 @@ VALUES (?, ?, ?, ?, ?, ?);
 
 
 # ---------------------------------------------------------------------------
-# Blob trigger — fires when a file lands in raw-evidence/{workOrderId}/
+# Blob trigger — fires when an image lands in raw-evidence/{workOrderId}/
 # ---------------------------------------------------------------------------
 @app.blob_trigger(
     arg_name="blob",
@@ -91,11 +111,6 @@ VALUES (?, ?, ?, ?, ?, ?);
     connection="EVIDENCE_STORAGE_CONNECTION",
 )
 def evidence_blob_trigger(blob: func.InputStream) -> None:
-    """
-    Fires on every upload to raw-evidence/.
-    blob.name is the path within the container, e.g. WO-123/photo.jpg.
-    Sprint 3 will add the Vision API call and audit-trail write here.
-    """
     parts = blob.name.split("/", 1)
     work_order_id = parts[0] if len(parts) == 2 else "unknown"
     filename = parts[1] if len(parts) == 2 else blob.name
@@ -104,20 +119,79 @@ def evidence_blob_trigger(blob: func.InputStream) -> None:
         "Evidence blob received | workOrderId=%s | file=%s | size=%d bytes",
         work_order_id, filename, blob.length,
     )
-    # TODO Sprint 3: call Azure AI Vision, write result to Cosmos audit-trail
-    # TODO Sprint 3: copy blob to processed-evidence container
+
+    if not _is_image(filename):
+        logging.info("Skipping non-image file: %s", filename)
+        return
+
+    image_bytes = blob.read()
+    vision_result = _analyse_image(image_bytes, work_order_id, filename)
+    _write_audit_record(work_order_id, filename, vision_result)
+    _move_to_processed(work_order_id, filename, image_bytes)
+
+
+def _analyse_image(image_bytes: bytes, work_order_id: str, filename: str) -> dict:
+    from azure.ai.vision.imageanalysis.models import VisualFeatures
+    try:
+        result = _vision().analyze(
+            image_data=image_bytes,
+            visual_features=[
+                VisualFeatures.CAPTION,
+                VisualFeatures.OBJECTS,
+                VisualFeatures.TAGS,
+            ],
+        )
+        return {
+            "caption": result.caption.text if result.caption else None,
+            "captionConfidence": round(result.caption.confidence, 4) if result.caption else None,
+            "objects": [
+                {"name": obj.tags[0].name, "confidence": round(obj.tags[0].confidence, 4)}
+                for obj in (result.objects.list if result.objects else [])
+                if obj.tags
+            ],
+            "tags": [
+                {"name": tag.name, "confidence": round(tag.confidence, 4)}
+                for tag in (result.tags.list if result.tags else [])
+            ],
+        }
+    except Exception:
+        logging.exception("Vision API failed | workOrderId=%s | file=%s", work_order_id, filename)
+        return {"error": "Vision analysis failed"}
+
+
+def _write_audit_record(work_order_id: str, filename: str, vision_result: dict) -> None:
+    record = {
+        "id": str(uuid.uuid4()),
+        "workOrderId": work_order_id,
+        "fileName": filename,
+        "status": "pending",
+        "visionAnalysis": vision_result,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        _cosmos_container("audit-trail").upsert_item(record)
+        logging.info("Audit record written | workOrderId=%s | file=%s", work_order_id, filename)
+    except Exception:
+        logging.exception("Cosmos write failed | workOrderId=%s", work_order_id)
+
+
+def _move_to_processed(work_order_id: str, filename: str, image_bytes: bytes) -> None:
+    blob_path = f"{work_order_id}/{filename}"
+    try:
+        _blob_svc().get_blob_client(
+            container="processed-evidence", blob=blob_path
+        ).upload_blob(image_bytes, overwrite=True)
+        logging.info("Copied to processed-evidence | blob=%s", blob_path)
+    except Exception:
+        logging.exception("Copy to processed-evidence failed | blob=%s", blob_path)
 
 
 # ---------------------------------------------------------------------------
 # POST /evidence?workOrderId=<id>&filename=<name>
-# Body: raw binary (image/jpeg, image/png, video/mp4, etc.)
+# Body: raw binary image (jpg, png, gif, bmp, tiff, webp)
 # ---------------------------------------------------------------------------
 @app.route(route="evidence", methods=["POST"])
 def submit_evidence(req: func.HttpRequest) -> func.HttpResponse:
-    """
-    Stores the uploaded file in raw-evidence/{workOrderId}/{filename}.
-    Returning 202 immediately; the blob trigger handles downstream processing.
-    """
     work_order_id = req.params.get("workOrderId", "").strip()
     filename = req.params.get("filename", "").strip()
 
@@ -125,6 +199,10 @@ def submit_evidence(req: func.HttpRequest) -> func.HttpResponse:
         return _json_err("workOrderId query parameter is required")
     if not filename:
         return _json_err("filename query parameter is required")
+    if not _is_image(filename):
+        return _json_err(
+            f"Unsupported file type. Accepted: {', '.join(sorted(_IMAGE_EXTENSIONS))}"
+        )
 
     file_bytes = req.get_body()
     if not file_bytes:
@@ -135,8 +213,9 @@ def submit_evidence(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
         container = os.environ.get("EVIDENCE_CONTAINER", "raw-evidence")
-        blob_client = _blob_svc().get_blob_client(container=container, blob=blob_path)
-        blob_client.upload_blob(file_bytes, overwrite=True)
+        _blob_svc().get_blob_client(container=container, blob=blob_path).upload_blob(
+            file_bytes, overwrite=True
+        )
     except Exception as exc:
         logging.exception("Blob upload failed | workOrderId=%s", work_order_id)
         return _json_err(f"Upload failed: {exc}", status=502)
@@ -153,14 +232,9 @@ def submit_evidence(req: func.HttpRequest) -> func.HttpResponse:
 
 # ---------------------------------------------------------------------------
 # POST /invoice
-# Body: { workOrderId, contractorId, lineItems, totalAmount, currency }
 # ---------------------------------------------------------------------------
 @app.route(route="invoice", methods=["POST"])
 def submit_invoice(req: func.HttpRequest) -> func.HttpResponse:
-    """
-    Validates and persists an invoice to SQL fqct-db-dev.
-    Creates the invoices table on first call if absent.
-    """
     try:
         body = req.get_json()
     except ValueError:
@@ -212,10 +286,6 @@ def submit_invoice(req: func.HttpRequest) -> func.HttpResponse:
 # ---------------------------------------------------------------------------
 @app.route(route="status/{workOrderId}", methods=["GET"])
 def get_status(req: func.HttpRequest, workOrderId: str) -> func.HttpResponse:
-    """
-    Returns the latest AI decision record from Cosmos audit-trail.
-    Partition key is workOrderId so this is always a single-partition read.
-    """
     if not workOrderId:
         return _json_err("workOrderId path parameter is required")
 

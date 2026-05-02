@@ -43,14 +43,17 @@
 
 ## PI 2 — Vision & Knowledge Retrieval
 
-### Sprint 3: Computer Vision ⬜ Not started
+### Sprint 3: Computer Vision 🔄 In progress
 
 | Task | Status | Notes |
 | --- | --- | --- |
-| Azure AI Vision resource (`fqct-vision-dev`) | ⬜ | Bicep module, analyse images for defects/safety |
-| Blob trigger → Vision API → Cosmos | ⬜ | Function: on `raw-evidence` upload, call Vision, write result to `audit-trail` |
-| Move to `processed-evidence` container | ⬜ | After Vision analysis completes |
-| Vision Interpretation Agent (skeleton) | ⬜ | `src/agents/vision_agent.py` — consumes Vision API output |
+| Azure AI Vision resource (`fqct-vision-dev`) | ✅ | `infra/modules/vision.bicep` — ComputerVision S1, `northeurope`, endpoint/key wired into Functions |
+| Blob trigger → Vision API → Cosmos | ✅ | Images only (POC) — `_analyse_image()` calls Vision with CAPTION/OBJECTS/TAGS; result written to `audit-trail` |
+| Move to `processed-evidence` container | ✅ | `_move_to_processed()` uploads blob after Vision analysis; non-images skipped entirely |
+| Vision Interpretation Agent (skeleton) | ✅ | `src/agents/vision_agent.py` — `WorkSummary` dataclass, `interpret()` with confidence thresholds |
+| OpenAPI spec — images only | ✅ | Removed `video/mp4`; added `image/gif`, `image/bmp`, `image/tiff`, `image/webp` |
+| Contractor portal — images only | ✅ | `accept="image/*"` on file input; label updated |
+| Unit tests — Vision pipeline | ✅ | 31 tests covering blob trigger, `_is_image`, `_analyse_image`, `_write_audit_record`, `_move_to_processed` |
 | Git tag | ⬜ | `v2-vision-agent` |
 
 ### Sprint 4: Knowledge Retrieval ⬜ Not started

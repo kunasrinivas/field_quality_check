@@ -62,10 +62,10 @@
     <h2>1 — Submit Field Evidence</h2>
     <label>Work Order ID</label>
     <input type="text" id="evidenceWorkOrderId" placeholder="e.g. WO-2026-00123" />
-    <label>Evidence File (photo or video)</label>
-    <input type="file" id="evidenceFile" accept="image/*,video/*" />
+    <label>Evidence Photo (jpg, png, gif, bmp, tiff, webp)</label>
+    <input type="file" id="evidenceFile" accept="image/*" />
     <p style="font-size:0.8rem;color:#888;margin-top:-0.5rem;margin-bottom:0.75rem">
-      File is sent as raw binary. Filename and workOrderId are passed as query parameters.
+      Image is sent as raw binary and analysed automatically by Azure AI Vision.
     </p>
     <button onclick="submitEvidence()">Upload Evidence</button>
     <div class="response" id="evidenceResponse"></div>

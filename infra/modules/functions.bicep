@@ -29,6 +29,12 @@ param sqlAdminLogin string
 @description('SQL Server admin password')
 param sqlAdminPassword string
 
+@description('Azure AI Vision endpoint URL')
+param visionEndpoint string
+
+@description('Name of the Azure AI Vision account — used to retrieve the API key at deploy time')
+param visionAccountName string
+
 // Dedicated storage account for Functions runtime state (separate from application data)
 resource funcStorage 'Microsoft.Storage/storageAccounts@2022-09-01' = {
   name: funcStorageName
@@ -52,6 +58,8 @@ var cosmosConnection = listConnectionStrings(resourceId('Microsoft.DocumentDB/da
 
 // Driver prefix required by pyodbc on Linux — ODBC Driver 18 ships on the Functions runtime image
 var sqlConnection = 'Driver={ODBC Driver 18 for SQL Server};Server=tcp:${sqlServerFqdn},1433;Initial Catalog=${sqlDatabaseName};UID=${sqlAdminLogin};PWD=${sqlAdminPassword};Encrypt=yes;TrustServerCertificate=no;Connection Timeout=30;'
+
+var visionKey = listKeys(resourceId('Microsoft.CognitiveServices/accounts', visionAccountName), '2023-05-01').key1
 
 // Linux Consumption plan — required for Python Functions
 resource appServicePlan 'Microsoft.Web/serverfarms@2022-09-01' = {
@@ -86,6 +94,8 @@ resource functionApp 'Microsoft.Web/sites@2022-09-01' = {
         { name: 'EVIDENCE_STORAGE_CONNECTION', value: evidenceStorageConnection }
         { name: 'COSMOS_CONNECTION',           value: cosmosConnection }
         { name: 'SQL_CONNECTION',              value: sqlConnection }
+        { name: 'VISION_ENDPOINT',             value: visionEndpoint }
+        { name: 'VISION_KEY',                  value: visionKey }
         { name: 'EVIDENCE_CONTAINER',          value: 'raw-evidence' }
         { name: 'COSMOS_DB_NAME',              value: 'fqct-data' }
       ]

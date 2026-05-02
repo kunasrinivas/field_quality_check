@@ -11,6 +11,9 @@
     "cosmosLocation": {
       "value": "northeurope"
     },
+    "visionLocation": {
+      "value": "northeurope"
+    },
     "sqlAdminLogin": {
       "value": "fqctadmin"
     }

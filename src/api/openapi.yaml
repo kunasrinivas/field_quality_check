@@ -54,11 +54,19 @@ paths:
             schema:
               type: string
               format: binary
-          video/mp4:
+          image/gif:
             schema:
               type: string
               format: binary
-          application/octet-stream:
+          image/bmp:
+            schema:
+              type: string
+              format: binary
+          image/tiff:
+            schema:
+              type: string
+              format: binary
+          image/webp:
             schema:
               type: string
               format: binary

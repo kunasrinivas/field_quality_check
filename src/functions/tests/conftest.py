@@ -23,6 +23,16 @@ if "pyodbc" not in sys.modules:
     _pyodbc_mock.Error = Exception  # tests catch pyodbc.Error by name
     sys.modules["pyodbc"] = _pyodbc_mock
 
+# ---------------------------------------------------------------------------
+# Shim azure-ai-vision-imageanalysis — the package is only needed at runtime
+# in Azure; tests patch _vision() so VisualFeatures values are never inspected.
+# ---------------------------------------------------------------------------
+if "azure.ai.vision.imageanalysis" not in sys.modules:
+    sys.modules.setdefault("azure.ai", MagicMock())
+    sys.modules["azure.ai.vision"] = MagicMock()
+    sys.modules["azure.ai.vision.imageanalysis"] = MagicMock()
+    sys.modules["azure.ai.vision.imageanalysis.models"] = MagicMock()
+
 # Make function_app importable from the tests sub-package
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
