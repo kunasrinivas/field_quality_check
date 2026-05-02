@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FQCT — Contractor Field Work Portal</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #1a1a1a; }
+    header { background: #0078d4; color: white; padding: 1rem 2rem; }
+    header h1 { font-size: 1.25rem; font-weight: 600; }
+    header p { font-size: 0.85rem; opacity: 0.85; margin-top: 0.25rem; }
+    main { max-width: 860px; margin: 2rem auto; padding: 0 1rem; display: grid; gap: 1.5rem; }
+    section { background: white; border-radius: 8px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    h2 { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; color: #0078d4; }
+    label { display: block; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.25rem; color: #444; }
+    input[type="text"], input[type="file"], textarea {
+      width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #ddd; border-radius: 6px;
+      font-size: 0.9rem; margin-bottom: 0.75rem;
+    }
+    textarea { resize: vertical; min-height: 120px; font-family: monospace; }
+    button {
+      background: #0078d4; color: white; border: none; padding: 0.5rem 1.25rem;
+      border-radius: 6px; font-size: 0.9rem; cursor: pointer; font-weight: 500;
+    }
+    button:hover { background: #005a9e; }
+    .response {
+      margin-top: 1rem; padding: 0.75rem; background: #f0f7ff; border-radius: 6px;
+      font-size: 0.85rem; font-family: monospace; white-space: pre-wrap; display: none;
+    }
+    .error { background: #fff0f0; color: #c00; }
+    .config { font-size: 0.8rem; color: #666; margin-bottom: 1rem; }
+    .config input { width: 100%; padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Field Quality Check — Contractor Portal</h1>
+  <p>Submit field evidence and invoices for automated review</p>
+</header>
+
+<main>
+
+  <!-- Gateway config -->
+  <section>
+    <h2>API Configuration</h2>
+    <div class="config">
+      <label>APIM Gateway URL (from deployment output)</label>
+      <input type="text" id="gatewayUrl"
+        placeholder="https://fqct-apim-xxxxxxxx.azure-api.net/fqct"
+        value="" />
+    </div>
+    <div class="config">
+      <label>Subscription Key (Ocp-Apim-Subscription-Key)</label>
+      <input type="text" id="subscriptionKey" placeholder="paste your APIM subscription key" />
+    </div>
+  </section>
+
+  <!-- Evidence upload -->
+  <section>
+    <h2>1 — Submit Field Evidence</h2>
+    <label>Work Order ID</label>
+    <input type="text" id="evidenceWorkOrderId" placeholder="e.g. WO-2026-00123" />
+    <label>Evidence File (photo or video)</label>
+    <input type="file" id="evidenceFile" accept="image/*,video/*" />
+    <p style="font-size:0.8rem;color:#888;margin-top:-0.5rem;margin-bottom:0.75rem">
+      File is sent as raw binary. Filename and workOrderId are passed as query parameters.
+    </p>
+    <button onclick="submitEvidence()">Upload Evidence</button>
+    <div class="response" id="evidenceResponse"></div>
+  </section>
+
+  <!-- Invoice submission -->
+  <section>
+    <h2>2 — Submit Invoice</h2>
+    <label>Invoice JSON</label>
+    <textarea id="invoiceBody" placeholder='{
+  "workOrderId": "WO-2026-00123",
+  "contractorId": "CTR-0042",
+  "lineItems": [
+    { "description": "Cable installation", "quantity": 10, "unitPrice": 85.00 }
+  ],
+  "totalAmount": 850.00,
+  "currency": "EUR"
+}'></textarea>
+    <button onclick="submitInvoice()">Submit Invoice</button>
+    <div class="response" id="invoiceResponse"></div>
+  </section>
+
+  <!-- Status check -->
+  <section>
+    <h2>3 — Check Decision Status</h2>
+    <label>Work Order ID</label>
+    <input type="text" id="statusWorkOrderId" placeholder="e.g. WO-2026-00123" />
+    <button onclick="checkStatus()">Check Status</button>
+    <div class="response" id="statusResponse"></div>
+  </section>
+
+</main>
+
+<script>
+  function getHeaders() {
+    const key = document.getElementById('subscriptionKey').value.trim();
+    return { 'Ocp-Apim-Subscription-Key': key };
+  }
+
+  function getBase() {
+    return document.getElementById('gatewayUrl').value.trim().replace(/\/$/, '');
+  }
+
+  function show(id, data, isError) {
+    const el = document.getElementById(id);
+    el.textContent = JSON.stringify(data, null, 2);
+    el.className = 'response' + (isError ? ' error' : '');
+    el.style.display = 'block';
+  }
+
+  async function submitEvidence() {
+    const workOrderId = document.getElementById('evidenceWorkOrderId').value.trim();
+    const file = document.getElementById('evidenceFile').files[0];
+    if (!workOrderId || !file) { alert('Work Order ID and file are required'); return; }
+
+    const url = `${getBase()}/evidence`
+      + `?workOrderId=${encodeURIComponent(workOrderId)}`
+      + `&filename=${encodeURIComponent(file.name)}`;
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { ...getHeaders(), 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+      });
+      show('evidenceResponse', await res.json(), !res.ok);
+    } catch (e) {
+      show('evidenceResponse', { error: e.message }, true);
+    }
+  }
+
+  async function submitInvoice() {
+    let body;
+    try { body = JSON.parse(document.getElementById('invoiceBody').value); }
+    catch (e) { alert('Invoice must be valid JSON'); return; }
+
+    try {
+      const res = await fetch(`${getBase()}/invoice`, {
+        method: 'POST',
+        headers: { ...getHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      show('invoiceResponse', await res.json(), !res.ok);
+    } catch (e) {
+      show('invoiceResponse', { error: e.message }, true);
+    }
+  }
+
+  async function checkStatus() {
+    const id = document.getElementById('statusWorkOrderId').value.trim();
+    if (!id) { alert('Work Order ID is required'); return; }
+
+    try {
+      const res = await fetch(`${getBase()}/status/${encodeURIComponent(id)}`, {
+        headers: getHeaders(),
+      });
+      show('statusResponse', await res.json(), !res.ok);
+    } catch (e) {
+      show('statusResponse', { error: e.message }, true);
+    }
+  }
+</script>
+
+</body>
+</html>

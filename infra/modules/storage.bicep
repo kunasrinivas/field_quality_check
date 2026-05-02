@@ -42,3 +42,5 @@ resource processedEvidenceContainer 'Microsoft.Storage/storageAccounts/blobServi
     publicAccess: 'None'
   }
 }
+
+output storageAccountName string = storageAccount.name

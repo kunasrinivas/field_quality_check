@@ -1,5 +1,7 @@
 name: Deploy Azure Infrastructure
 
+# Can be triggered manually from any branch (select branch in GitHub UI → Actions → Run workflow).
+# Intended branches: main (production), dev (integration testing).
 on:
   workflow_dispatch:
     inputs:
@@ -63,22 +65,32 @@ jobs:
 
     - name: Deploy Infrastructure via Bicep
       if: ${{ github.event.inputs.mode == 'create' }}
+      env:
+        SQL_ADMIN_PASSWORD: ${{ secrets.SQL_ADMIN_PASSWORD }}
+        APIM_PUBLISHER_EMAIL: ${{ secrets.APIM_PUBLISHER_EMAIL }}
       run: |
         set -e
-        echo "Deploying infrastructure (storage + key vault)..."
+        echo "Deploying infrastructure (storage + key vault + sql + cosmos + functions + apim)..."
         az deployment group create \
           --name "$DEPLOY_NAME" \
           --resource-group "$RESOURCE_GROUP" \
           --template-file "$INFRA_TEMPLATE" \
           --parameters @"$INFRA_PARAMS" \
+          --parameters sqlAdminPassword="$SQL_ADMIN_PASSWORD" \
+          --parameters apimPublisherEmail="$APIM_PUBLISHER_EMAIL" \
           --mode Incremental \
           --output none
 
-        STORAGE_NAME=$(az deployment group show \
+        OUTPUTS=$(az deployment group show \
           --name "$DEPLOY_NAME" \
           --resource-group "$RESOURCE_GROUP" \
-          --query "properties.outputs.storageAccountName.value" -o tsv)
-        echo "Storage account deployed: $STORAGE_NAME"
+          --query "properties.outputs" -o json)
+
+        echo "Storage account  : $(echo "$OUTPUTS" | jq -r '.storageAccountName.value')"
+        echo "SQL Server FQDN  : $(echo "$OUTPUTS" | jq -r '.sqlServerFqdn.value')"
+        echo "Cosmos DB account: $(echo "$OUTPUTS" | jq -r '.cosmosAccountName.value')"
+        echo "Function App     : $(echo "$OUTPUTS" | jq -r '.functionAppName.value')"
+        echo "APIM Gateway URL : $(echo "$OUTPUTS" | jq -r '.apimGatewayUrl.value')"
         echo "Infrastructure deployment complete."
 
     - name: Assign Key Vault RBAC Roles

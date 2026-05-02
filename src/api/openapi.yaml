@@ -1,0 +1,227 @@
+openapi: "3.0.3"
+info:
+  title: Field Quality Check API
+  description: >
+    REST API for telecom contractor field work review.
+    Evidence is submitted by contractors, invoices are cross-checked
+    against work performed, and decision statuses are queried by
+    operations teams and the contractor portal.
+  version: "1.0.0"
+
+servers:
+  - url: https://{apimGateway}/fqct
+    description: Azure API Management gateway
+    variables:
+      apimGateway:
+        default: fqct-apim-dev.azure-api.net
+        description: APIM gateway hostname (from deployment output)
+
+security:
+  - apimSubscriptionKey: []
+
+paths:
+  /evidence:
+    post:
+      operationId: submitEvidence
+      summary: Submit field evidence
+      description: >
+        Upload a single photo or video as raw binary. The file is stored in
+        raw-evidence/{workOrderId}/{filename} and triggers the Vision
+        Interpretation Agent pipeline (Sprint 3).
+        Send the file bytes directly as the request body with the appropriate
+        Content-Type (image/jpeg, image/png, video/mp4, etc.).
+      parameters:
+        - name: workOrderId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Unique work order identifier
+        - name: filename
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Original filename including extension (e.g. photo.jpg)
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+          image/png:
+            schema:
+              type: string
+              format: binary
+          video/mp4:
+            schema:
+              type: string
+              format: binary
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "202":
+          description: Evidence accepted for processing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /invoice:
+    post:
+      operationId: submitInvoice
+      summary: Submit contractor invoice
+      description: >
+        Submit an invoice for work performed. The Invoice Verification Agent
+        (Sprint 6) will cross-check line items against the work order and
+        Vision analysis results.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvoiceRequest"
+      responses:
+        "202":
+          description: Invoice accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvoiceAccepted"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /status/{workOrderId}:
+    get:
+      operationId: getDecisionStatus
+      summary: Get AI decision status
+      description: >
+        Returns the latest decision status for a work order.
+        Possible statuses: pending | approved | partial | rework.
+      parameters:
+        - name: workOrderId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Work order ID to query
+      responses:
+        "200":
+          description: Current decision status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "404":
+          description: Work order not found
+
+components:
+  securitySchemes:
+    apimSubscriptionKey:
+      type: apiKey
+      in: header
+      name: Ocp-Apim-Subscription-Key
+
+  schemas:
+    JobAccepted:
+      type: object
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        workOrderId:
+          type: string
+        blobPath:
+          type: string
+          description: Path within the raw-evidence container (workOrderId/filename)
+        status:
+          type: string
+          enum: [accepted]
+
+    InvoiceRequest:
+      type: object
+      required:
+        - workOrderId
+        - contractorId
+        - lineItems
+        - totalAmount
+        - currency
+      properties:
+        workOrderId:
+          type: string
+        contractorId:
+          type: string
+        lineItems:
+          type: array
+          items:
+            type: object
+            required:
+              - description
+              - quantity
+              - unitPrice
+            properties:
+              description:
+                type: string
+              quantity:
+                type: number
+              unitPrice:
+                type: number
+        totalAmount:
+          type: number
+        currency:
+          type: string
+          example: EUR
+
+    InvoiceAccepted:
+      type: object
+      properties:
+        invoiceId:
+          type: string
+          format: uuid
+        workOrderId:
+          type: string
+        status:
+          type: string
+          enum: [received]
+
+    StatusResponse:
+      type: object
+      properties:
+        workOrderId:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved, partial, rework]
+        message:
+          type: string
+        decision:
+          type: object
+          description: Present when status is approved, partial, or rework
+          properties:
+            approvedAmount:
+              type: number
+            deviations:
+              type: array
+              items:
+                type: string
+            justification:
+              type: string
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string

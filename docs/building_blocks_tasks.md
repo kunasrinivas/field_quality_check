@@ -1,125 +1,131 @@
-# Telecom Contractor Field Work Review System - Building Blocks & Tasks
+# Telecom Contractor Field Work Review System — Building Blocks & Tasks
 
-This document breaks the system into incremental building blocks and tasks for agile development. Each block aligns with the architecture and functional requirements from the primary skill document.
-
----
-
-## **1. Building Blocks**
-The system implementation is divided into the following high-level components:
-
-### **1.1 Channel and Ingestion Layer**
-- Develop contractor apps and portals for uploading photos/videos and metadata.
-- Set up Azure Front Door for secure entry routing.
-- Configure Azure API Management to expose REST APIs for:
-  - Evidence submission (images/videos).
-  - Receiving invoices.
-  - Querying decision statuses.
-
-### **1.2 Storage and Data Layer**
-- Configure Azure Blob Storage for raw and processed visual evidence, with:
-  - Containers for logical separation of data.
-  - Lifecycle management policies for retention.
-- Set up Azure SQL Database for structured data storage:
-  - Work orders, contractor profiles, and invoices.
-- Set up Azure Cosmos DB for semi-structured data:
-  - Logs, agent conversations, and audit trails.
-
-### **1.3 AI and Analytics Layer**
-- Integrate Azure AI Vision:
-  - Create/deploy computer vision models.
-  - Analyze visual evidence for defects, safety, and compliance issues.
-- Implement Azure AI Search:
-  - Index SOPs, contracts, SLAs, and operational documents.
-- Set up Azure OpenAI for multi-agent orchestration:
-  - Vision Interpretation Agent.
-  - Compliance & SLA Agent.
-  - Invoice Verification Agent.
-  - Decision & Explanation Agent.
-
-### **1.4 Business Logic and Workflow Layer**
-- Develop Azure Functions for:
-  - Automating evidence uploads and invoice workflows.
-  - Updating status in storage after agent decisions.
-- Create Logic Apps for:
-  - Human-in-the-loop workflows.
-  - Notifications and escalations (rework requests, approvals).
-
-### **1.5 Integration Layer**
-- Configure APIs for external enterprise systems:
-  - ERP & billing (e.g., SAP).
-  - Workforce management.
-  - Ticketing systems (e.g., Jira, ServiceNow).
-- Develop Azure Logic Apps/Functions to integrate workflows with existing systems:
-  - Push approved amounts to ERP.
-  - Synchronize work order changes.
-  - Handle rework issues via ticketing systems.
-
-### **1.6 Security and Observability**
-- Configure Azure AD for authentication and authorization.
-- Secure storage with VNETs, private endpoints, and encryption.
-- Implement monitoring tools:
-  - Azure Monitor.
-  - Log Analytics.
-  - Application Insights.
-- Build Power BI Dashboards for system KPIs (e.g., auto-approval rates, bottlenecks).
+> **Legend:** ✅ Done · 🔄 In progress · ⬜ Not started
 
 ---
 
-## **2. Tasks and Milestones**
-The following tasks will be implemented progressively to ensure agile delivery:
+## PI 1 — Foundation & Data Platform
 
-### **2.1 Sprint 1: Initial Setup**
-1. Set up Azure DevOps/GitHub for source control and CI/CD pipelines.
-2. Configure fundamental Azure resources (Blob Storage, SQL Database, Cosmos DB).
-3. Create a skeleton for contractor mobile/web portals.
+### Sprint 1: Infrastructure Baseline ✅ Complete
 
-### **2.2 Sprint 2: Ingestion Layer**
-1. Develop REST APIs for:
-   - Uploading photos/videos.
-   - Submitting metadata and invoices.
-   - Checking decision statuses.
-2. Implement Azure Front Door and API Management.
+| Task | Status | Notes |
+| --- | --- | --- |
+| GitHub repository + CI/CD pipeline | ✅ | Single `workflow_dispatch` workflow, create/delete modes, confirmation gate |
+| Azure Resource Group (`fqct-rg-dev`) | ✅ | `westeurope`, GDPR-compliant region |
+| Azure Blob Storage (`fqctstg<hash>`) | ✅ | `raw-evidence` + `processed-evidence` containers, TLS 1.2, no public access |
+| Azure Key Vault (`fqct-kv-dev`) | ✅ | RBAC mode, soft delete 90d, purge protection, SP roles assigned |
+| Azure SQL Database (`fqct-db-dev`) | ✅ | Basic tier, SQL auth via GitHub Secret, AllowAzureServices firewall rule |
+| Azure Cosmos DB (`fqct-cosmos-<hash>`) | ✅ | Serverless, Session consistency, 3 containers with partition keys |
+| IaC modularised | ✅ | `infra/modules/`: storage, keyvault, sql, cosmosdb |
+| Workflow security hardening | ✅ | `--output none` on all az commands, secrets via step-level env, Bicep outputs only |
+| Resource naming convention | ✅ | `fqct-` prefix, `fqctstg` for storage (Azure constraint), `uniqueString` for global uniqueness |
+| Architecture Decision Records | ✅ | ADR-001 through ADR-011 in `docs/decisions/` |
 
-### **2.3 Sprint 3: AI Vision and Storage**
-1. Train/deploy a custom computer vision model on Azure AI Vision.
-2. Automate evidence upload triggers via Azure Functions.
-3. Set up structured storage workflows (Blob and SQL).
+### Sprint 2: Ingestion Layer ✅ Complete
 
-### **2.4 Sprint 4: Knowledge Retrieval**
-1. Index SOPs, SLAs, and compliance documents into Azure AI Search.
-2. Establish retrieval queries using keyword and semantic search.
-
-### **2.5 Sprint 5: Agent Orchestration (Basic)**
-1. Implement Vision Interpretation Agent:
-   - Process CV outputs and publish analysis.
-2. Implement Compliance & SLA Agent:
-   - Validate against SLAs and SOPs.
-
-### **2.6 Sprint 6: Invoice Verification & Workflow**
-1. Integrate Invoice Verification Agent to cross-check invoice data.
-2. Create approval mechanisms and decision routing workflows.
-3. Setup Power Automate for notifications and manual overrides.
-
-### **2.7 Sprint 7: Security, Observability, and KPIs**
-1. Enforce VNETs/private endpoints for all Azure resources.
-2. Configure Azure Monitor and Log Analytics.
-3. Build Power BI dashboards for key metrics.
-
-### **2.8 Sprint 8: Full Integration and Final Testing**
-1. Finalize API integrations with ERP and ticketing systems.
-2. Conduct end-to-end testing for all workflows.
-3. Ensure compliance with GDPR and Responsible AI principles.
+| Task | Status | Notes |
+| --- | --- | --- |
+| API Management Bicep module | ✅ | `infra/modules/apim.bicep` — Consumption tier, 3 operations, Functions backend |
+| Azure Functions Bicep module | ✅ | `infra/modules/functions.bicep` — Linux Consumption, Python 3.11, system-assigned MI |
+| Functions runtime storage | ✅ | `fqctfnstg<hash>` — separate from evidence storage |
+| OpenAPI spec | ✅ | `src/api/openapi.yaml` — 3 endpoints, raw binary upload, full schemas |
+| Contractor portal stub | ✅ | `src/portal/index.html` — evidence upload, invoice submit, status check forms |
+| `function_app.py` — blob trigger | ✅ | Fires on `raw-evidence/{workOrderId}/` upload; Vision call stubbed for Sprint 3 |
+| `function_app.py` — `POST /evidence` | ✅ | Raw binary upload → `raw-evidence/{workOrderId}/{filename}` via BlobServiceClient |
+| `function_app.py` — `POST /invoice` | ✅ | JSON validated → inserted into SQL `dbo.invoices` via pyodbc |
+| `function_app.py` — `GET /status` | ✅ | Queries Cosmos `audit-trail` by `workOrderId` partition key; returns 404 until Sprint 3 writes records |
+| ODBC driver prefix in SQL_CONNECTION | ✅ | `functions.bicep` — ODBC Driver 18 prepended; pyodbc ready on Linux runtime |
+| APIM_PUBLISHER_EMAIL moved to secrets | ✅ | Removed from `dev.json`; injected via GitHub Secret at deploy time |
+| ADR-012 | ✅ | APIM Consumption tier decision documented |
+| Git tag | ⬜ | `v1-ingestion-layer` |
 
 ---
 
-## **3. Tags for PI in Git**
-After achieving working prototypes (e.g., API setup, Vision Agent, Invoice Agent, etc.), the following tags will be used in Git:
-- `v1-ingestion-layer`
-- `v2-vision-agent`
-- `v3-compliance-agent`
-- `v4-invoice-agent`
-- `v5-integration-test`
+## PI 2 — Vision & Knowledge Retrieval
+
+### Sprint 3: Computer Vision ⬜ Not started
+
+| Task | Status | Notes |
+| --- | --- | --- |
+| Azure AI Vision resource (`fqct-vision-dev`) | ⬜ | Bicep module, analyse images for defects/safety |
+| Blob trigger → Vision API → Cosmos | ⬜ | Function: on `raw-evidence` upload, call Vision, write result to `audit-trail` |
+| Move to `processed-evidence` container | ⬜ | After Vision analysis completes |
+| Vision Interpretation Agent (skeleton) | ⬜ | `src/agents/vision_agent.py` — consumes Vision API output |
+| Git tag | ⬜ | `v2-vision-agent` |
+
+### Sprint 4: Knowledge Retrieval ⬜ Not started
+
+| Task | Status | Notes |
+| --- | --- | --- |
+| Azure AI Search (`fqct-search-dev`) | ⬜ | Bicep module, index SOPs, SLAs, contracts |
+| Document indexing pipeline | ⬜ | Load compliance docs into search index |
+| Semantic + keyword retrieval | ⬜ | Query wrapper for agent context injection |
+| Azure Front Door (`fqct-fd-dev`) + WAF | ⬜ | Secure entry routing for APIs |
 
 ---
 
-This incremental roadmap will guide the development process, ensuring clarity and flexibility across all sprints.
+## PI 3 — Multi-Agent Orchestration
+
+### Sprint 5: First Two Agents ⬜ Not started
+
+| Task | Status | Notes |
+| --- | --- | --- |
+| Vision Interpretation Agent | ⬜ | `src/agents/vision_agent.py` — structured work summary + confidence score |
+| Compliance & SLA Agent | ⬜ | `src/agents/compliance_agent.py` — retrieves SOP, checks deviations |
+| Agent conversation logging to Cosmos | ⬜ | Write turns to `agent-conversations` container |
+| Git tag | ⬜ | `v3-compliance-agent` |
+
+### Sprint 6: Invoice & Decision Agents ⬜ Not started
+
+| Task | Status | Notes |
+| --- | --- | --- |
+| Invoice Verification Agent | ⬜ | `src/agents/invoice_agent.py` — cross-check invoice vs work order + Vision output |
+| Decision & Explanation Agent | ⬜ | `src/agents/decision_agent.py` — approve / partial / rework + justification |
+| Azure Logic Apps — HITL workflows | ⬜ | Human-in-the-loop approval routing, rework notifications |
+| Approval records written to `audit-trail` | ⬜ | Full decision audit in Cosmos |
+| Git tag | ⬜ | `v4-invoice-agent` |
+
+---
+
+## PI 4 — Integration & Hardening
+
+### Sprint 7: External Integrations ⬜ Not started
+
+| Task | Status | Notes |
+| --- | --- | --- |
+| ERP/billing connector | ⬜ | Push approved amounts to SAP or equivalent |
+| Workforce management sync | ⬜ | Work order status updates |
+| Ticketing integration | ⬜ | Jira / ServiceNow — rework issue creation |
+| AAD-only auth for SQL | ⬜ | Replace SQL auth with managed identity (ADR-010 known gap) |
+| Git tag | ⬜ | `v5-integration-test` |
+
+### Sprint 8: Security Hardening + Observability ⬜ Not started
+
+| Task | Status | Notes |
+| --- | --- | --- |
+| VNETs + private endpoints | ⬜ | All resources: Storage, KV, SQL, Cosmos, Functions |
+| Azure Monitor + Log Analytics | ⬜ | Agent decisions, retries, escalations |
+| Application Insights | ⬜ | Function and API latency tracing |
+| Power BI dashboards | ⬜ | Auto-approval rate, rework frequency, invoice accuracy, latency |
+| GDPR audit trail verification | ⬜ | Full data lineage review |
+| Responsible AI review | ⬜ | Bias, explainability, human override paths |
+| End-to-end test suite | ⬜ | All workflows from upload to decision |
+
+---
+
+## Architecture Decision Records
+
+| ADR | Decision | Date |
+| --- | --- | --- |
+| [ADR-001](decisions/ADR-001-azure-platform.md) | Microsoft Azure as cloud platform | 2026-05-01 |
+| [ADR-002](decisions/ADR-002-bicep-over-terraform.md) | Bicep for IaC over Terraform or ARM | 2026-05-01 |
+| [ADR-003](decisions/ADR-003-github-actions-cicd.md) | GitHub Actions for CI/CD | 2026-05-01 |
+| [ADR-004](decisions/ADR-004-single-workflow-file.md) | Single consolidated workflow file | 2026-05-01 |
+| [ADR-005](decisions/ADR-005-resource-naming-convention.md) | `fqct-` prefix naming convention | 2026-05-01 |
+| [ADR-006](decisions/ADR-006-unique-string-naming.md) | `uniqueString()` for globally-scoped names | 2026-05-01 |
+| [ADR-007](decisions/ADR-007-keyvault-rbac-mode.md) | Key Vault in RBAC mode | 2026-05-01 |
+| [ADR-008](decisions/ADR-008-cosmos-serverless-dev.md) | Cosmos DB serverless for dev | 2026-05-02 |
+| [ADR-009](decisions/ADR-009-cosmos-partition-keys.md) | Cosmos DB partition key design | 2026-05-02 |
+| [ADR-010](decisions/ADR-010-sql-authentication.md) | SQL Server authentication approach | 2026-05-02 |
+| [ADR-011](decisions/ADR-011-workflow-security-hardening.md) | Workflow security hardening | 2026-05-02 |
+| [ADR-012](decisions/ADR-012-apim-consumption-tier.md) | API Management Consumption tier for dev | 2026-05-02 |
