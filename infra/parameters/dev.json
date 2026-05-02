@@ -5,14 +5,14 @@
     "location": {
       "value": "westeurope"
     },
-    "keyVaultName": {
-      "value": "fqct-kv-dev"
+    "sqlLocation": {
+      "value": "northeurope"
+    },
+    "cosmosLocation": {
+      "value": "northeurope"
     },
     "sqlAdminLogin": {
       "value": "fqctadmin"
-    },
-    "sqlLocation": {
-      "value": "northeurope"
     }
   }
 }

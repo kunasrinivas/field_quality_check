@@ -24,7 +24,6 @@ permissions:
 env:
   RESOURCE_GROUP: fqct-rg-dev
   LOCATION: westeurope
-  KEYVAULT_NAME: fqct-kv-dev
   INFRA_TEMPLATE: infra/main.bicep
   INFRA_PARAMS: infra/parameters/dev.json
   DEPLOY_NAME: fqct-deployment
@@ -87,10 +86,14 @@ jobs:
           --query "properties.outputs" -o json)
 
         echo "Storage account  : $(echo "$OUTPUTS" | jq -r '.storageAccountName.value')"
+        echo "Key Vault        : $(echo "$OUTPUTS" | jq -r '.keyVaultName.value')"
         echo "SQL Server FQDN  : $(echo "$OUTPUTS" | jq -r '.sqlServerFqdn.value')"
         echo "Cosmos DB account: $(echo "$OUTPUTS" | jq -r '.cosmosAccountName.value')"
         echo "Function App     : $(echo "$OUTPUTS" | jq -r '.functionAppName.value')"
         echo "APIM Gateway URL : $(echo "$OUTPUTS" | jq -r '.apimGatewayUrl.value')"
+
+        # Propagate Key Vault name to subsequent steps
+        echo "KEYVAULT_NAME=$(echo "$OUTPUTS" | jq -r '.keyVaultName.value')" >> "$GITHUB_ENV"
         echo "Infrastructure deployment complete."
 
     - name: Assign Key Vault RBAC Roles

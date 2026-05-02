@@ -4,11 +4,11 @@ param location string = 'westeurope'
 @description('Azure region for SQL Server — westeurope has provisioning restrictions in some subscriptions')
 param sqlLocation string = 'northeurope'
 
+@description('Azure region for Cosmos DB — westeurope has capacity constraints for zonal redundant accounts')
+param cosmosLocation string = 'northeurope'
+
 @description('Deterministic unique suffix derived from the resource group ID — reused across all globally-scoped resource names')
 param resourceSuffix string = uniqueString(resourceGroup().id)
-
-@description('Name of the Key Vault')
-param keyVaultName string = 'fqct-kv-dev'
 
 @description('SQL Server administrator login')
 param sqlAdminLogin string = 'fqctadmin'
@@ -17,11 +17,13 @@ param sqlAdminLogin string = 'fqctadmin'
 @description('SQL Server administrator password — passed as a secret, never stored in parameters files')
 param sqlAdminPassword string
 
-@description('Publisher email for API Management notifications. Set to empty string to skip APIM deployment (free-tier subscriptions may lack quota).')
+@description('Publisher email for API Management notifications. Leave empty to skip APIM deployment (free-tier subscriptions may lack quota).')
 param apimPublisherEmail string = ''
 
-// All globally-scoped names derived from the same suffix
+// All globally-scoped names derived from the same suffix — never hard-coded to avoid
+// soft-delete conflicts on Key Vault and global-uniqueness collisions on storage/cosmos.
 var storageAccountName  = 'fqctstg${resourceSuffix}'
+var keyVaultName         = 'fqct-kv-${take(resourceSuffix, 8)}'
 var sqlServerName        = 'fqct-sql-${take(resourceSuffix, 8)}'
 var sqlDatabaseName      = 'fqct-db-dev'
 var cosmosAccountName    = 'fqct-cosmos-${take(resourceSuffix, 8)}'
@@ -61,7 +63,7 @@ module sql './modules/sql.bicep' = {
 module cosmos './modules/cosmosdb.bicep' = {
   name: 'CosmosDeployment'
   params: {
-    location: location
+    location: cosmosLocation
     cosmosAccountName: cosmosAccountName
   }
 }
@@ -69,7 +71,7 @@ module cosmos './modules/cosmosdb.bicep' = {
 // Functions depends on storage (implicit via output ref), sql (implicit via output ref),
 // and cosmos (explicit dependsOn — cosmosAccountName is a string so ARM can't infer it).
 // Without dependsOn, ARM deploys Functions and Cosmos in parallel and listConnectionStrings()
-// fails because Cosmos hasn't reached a running state yet.
+// fires before Cosmos reaches running state.
 module functions './modules/functions.bicep' = {
   name: 'FunctionsDeployment'
   dependsOn: [cosmos]
@@ -100,6 +102,7 @@ module apim './modules/apim.bicep' = if (deployApim) {
 }
 
 output storageAccountName  string = storageAccountName
+output keyVaultName         string = keyVault.outputs.keyVaultName
 output sqlServerFqdn        string = sql.outputs.sqlServerFqdn
 output cosmosAccountName    string = cosmosAccountName
 output functionAppName      string = functions.outputs.functionAppName
