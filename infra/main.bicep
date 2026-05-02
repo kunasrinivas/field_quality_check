@@ -17,8 +17,8 @@ param sqlAdminLogin string = 'fqctadmin'
 @description('SQL Server administrator password — passed as a secret, never stored in parameters files')
 param sqlAdminPassword string
 
-@description('Publisher email for API Management notifications')
-param apimPublisherEmail string
+@description('Publisher email for API Management notifications. Set to empty string to skip APIM deployment (free-tier subscriptions may lack quota).')
+param apimPublisherEmail string = ''
 
 // All globally-scoped names derived from the same suffix
 var storageAccountName  = 'fqctstg${resourceSuffix}'
@@ -29,6 +29,7 @@ var functionAppName      = 'fqct-func-${take(resourceSuffix, 8)}'
 var funcStorageName      = 'fqctfnstg${take(resourceSuffix, 8)}'
 var planName             = 'fqct-plan-dev'
 var apimName             = 'fqct-apim-${take(resourceSuffix, 8)}'
+var deployApim           = !empty(apimPublisherEmail)
 
 module storage './modules/storage.bicep' = {
   name: 'StorageDeployment'
@@ -65,9 +66,13 @@ module cosmos './modules/cosmosdb.bicep' = {
   }
 }
 
-// Functions depends on storage, sql, and cosmos — implicit via param references
+// Functions depends on storage (implicit via output ref), sql (implicit via output ref),
+// and cosmos (explicit dependsOn — cosmosAccountName is a string so ARM can't infer it).
+// Without dependsOn, ARM deploys Functions and Cosmos in parallel and listConnectionStrings()
+// fails because Cosmos hasn't reached a running state yet.
 module functions './modules/functions.bicep' = {
   name: 'FunctionsDeployment'
+  dependsOn: [cosmos]
   params: {
     location: location
     functionAppName: functionAppName
@@ -82,8 +87,9 @@ module functions './modules/functions.bicep' = {
   }
 }
 
-// APIM depends on functions hostname — implicit via param reference
-module apim './modules/apim.bicep' = {
+// APIM is skipped when apimPublisherEmail is empty (free-tier subscriptions).
+// Set the APIM_PUBLISHER_EMAIL GitHub Secret to enable it.
+module apim './modules/apim.bicep' = if (deployApim) {
   name: 'ApimDeployment'
   params: {
     location: location
@@ -98,4 +104,4 @@ output sqlServerFqdn        string = sql.outputs.sqlServerFqdn
 output cosmosAccountName    string = cosmosAccountName
 output functionAppName      string = functions.outputs.functionAppName
 output functionAppHostname  string = functions.outputs.functionAppHostname
-output apimGatewayUrl       string = apim.outputs.apimGatewayUrl
+output apimGatewayUrl       string = deployApim ? apim.outputs!.apimGatewayUrl : 'APIM not deployed — set APIM_PUBLISHER_EMAIL secret to enable'
