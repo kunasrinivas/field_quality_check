@@ -62,6 +62,55 @@ jobs:
           echo "LOCATION=$RG_LOCATION" >> $GITHUB_ENV
         fi
 
+    - name: Remove failed resources (idempotency pre-flight)
+      if: ${{ github.event.inputs.mode == 'create' }}
+      run: |
+        # Delete any resource stuck in a Failed provisioning state so the
+        # subsequent Incremental deployment can recreate it cleanly.
+        # Healthy resources are untouched — same behaviour as Ansible.
+        RG_EXISTS=$(az group exists --name "$RESOURCE_GROUP")
+        if [ "$RG_EXISTS" = "false" ]; then
+          echo "Resource group does not exist yet — skipping pre-flight."
+          exit 0
+        fi
+
+        FAILED_IDS=$(az resource list \
+          --resource-group "$RESOURCE_GROUP" \
+          --query "[?provisioningState=='Failed'].id" \
+          --output tsv 2>/dev/null || true)
+
+        if [ -z "$FAILED_IDS" ]; then
+          echo "No failed resources found — deployment is clean."
+        else
+          echo "Removing failed resources before redeployment:"
+          echo "$FAILED_IDS"
+          while IFS= read -r resource_id; do
+            [ -z "$resource_id" ] && continue
+            echo "  Deleting: $resource_id"
+            az resource delete --ids "$resource_id" --output none 2>/dev/null || \
+              echo "  Could not delete $resource_id (may need manual cleanup)"
+          done <<< "$FAILED_IDS"
+          echo "Pre-flight cleanup complete."
+        fi
+
+        # Also cancel any stuck in-progress ARM deployments so they don't block.
+        RUNNING=$(az deployment group list \
+          --resource-group "$RESOURCE_GROUP" \
+          --query "[?properties.provisioningState=='Running' || properties.provisioningState=='Accepted'].name" \
+          --output tsv 2>/dev/null || true)
+
+        if [ -n "$RUNNING" ]; then
+          echo "Cancelling in-progress deployments:"
+          while IFS= read -r dep_name; do
+            [ -z "$dep_name" ] && continue
+            echo "  Cancelling: $dep_name"
+            az deployment group cancel \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$dep_name" \
+              --output none 2>/dev/null || true
+          done <<< "$RUNNING"
+        fi
+
     - name: Deploy Infrastructure via Bicep
       if: ${{ github.event.inputs.mode == 'create' }}
       env:
@@ -150,4 +199,6 @@ jobs:
         fi
         echo "Deleting Resource Group: $RESOURCE_GROUP"
         az group delete --name "$RESOURCE_GROUP" --yes --no-wait --output none || true
-        echo "NOTE: Key Vault soft-delete retention still applies. Purge is NOT performed by this workflow."
+        echo "NOTE: Key Vault soft-delete retention applies. The new hash-named vault"
+        echo "      (fqct-kv-<hash>) has purge protection disabled, so it can be purged"
+        echo "      immediately if needed: az keyvault purge --name <name> --location westeurope"
