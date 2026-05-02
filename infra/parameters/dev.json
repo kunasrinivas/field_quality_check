@@ -5,11 +5,8 @@
     "location": {
       "value": "westeurope"
     },
-    "storageAccountName": {
-      "value": "fqcstoragedev"
-    },
     "keyVaultName": {
-      "value": "fqct-kv-main"
+      "value": "fqct-kv-dev"
     }
   }
 }

@@ -20,11 +20,12 @@ permissions:
   contents: read
 
 env:
-  RESOURCE_GROUP: FQCT-ResourceGroup
+  RESOURCE_GROUP: fqct-rg-dev
   LOCATION: westeurope
-  KEYVAULT_NAME: fqct-kv-main
+  KEYVAULT_NAME: fqct-kv-dev
   INFRA_TEMPLATE: infra/main.bicep
   INFRA_PARAMS: infra/parameters/dev.json
+  DEPLOY_NAME: fqct-deployment
 
 jobs:
   deploy:
@@ -54,7 +55,7 @@ jobs:
         RG_LOCATION=$(az group show --name "$RESOURCE_GROUP" --query location -o tsv 2>/dev/null || true)
         if [ -z "$RG_LOCATION" ]; then
           echo "Creating Resource Group: $RESOURCE_GROUP in $LOCATION"
-          az group create --name "$RESOURCE_GROUP" --location "$LOCATION"
+          az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
         else
           echo "Resource Group already exists in: $RG_LOCATION"
           echo "LOCATION=$RG_LOCATION" >> $GITHUB_ENV
@@ -64,12 +65,20 @@ jobs:
       if: ${{ github.event.inputs.mode == 'create' }}
       run: |
         set -e
-        echo "Deploying infrastructure via Bicep (storage + key vault)..."
+        echo "Deploying infrastructure (storage + key vault)..."
         az deployment group create \
+          --name "$DEPLOY_NAME" \
           --resource-group "$RESOURCE_GROUP" \
           --template-file "$INFRA_TEMPLATE" \
           --parameters @"$INFRA_PARAMS" \
-          --mode Incremental
+          --mode Incremental \
+          --output none
+
+        STORAGE_NAME=$(az deployment group show \
+          --name "$DEPLOY_NAME" \
+          --resource-group "$RESOURCE_GROUP" \
+          --query "properties.outputs.storageAccountName.value" -o tsv)
+        echo "Storage account deployed: $STORAGE_NAME"
         echo "Infrastructure deployment complete."
 
     - name: Assign Key Vault RBAC Roles
@@ -86,10 +95,9 @@ jobs:
 
         SERVICE_PRINCIPAL_OBJECT_ID=$(az ad sp show --id "$SP_APPID" --query id -o tsv 2>/dev/null || true)
         if [ -z "$SERVICE_PRINCIPAL_OBJECT_ID" ]; then
-          echo "ERROR: Service principal $SP_APPID not found in AAD."
+          echo "ERROR: Service principal not found in AAD."
           exit 1
         fi
-        echo "Using SP Object ID: $SERVICE_PRINCIPAL_OBJECT_ID"
 
         VAULT_ID=$(az keyvault show --name "$KEYVAULT_NAME" --query id -o tsv)
 
@@ -97,21 +105,24 @@ jobs:
           --role "Key Vault Secrets Officer" \
           --assignee-object-id "$SERVICE_PRINCIPAL_OBJECT_ID" \
           --scope "$VAULT_ID" \
+          --output none \
           || echo "Secrets Officer role may already be assigned."
 
         az role assignment create \
           --role "Key Vault Crypto Officer" \
           --assignee-object-id "$SERVICE_PRINCIPAL_OBJECT_ID" \
           --scope "$VAULT_ID" \
+          --output none \
           || echo "Crypto Officer role may already be assigned."
 
         az role assignment create \
           --role "Key Vault Certificates Officer" \
           --assignee-object-id "$SERVICE_PRINCIPAL_OBJECT_ID" \
           --scope "$VAULT_ID" \
+          --output none \
           || echo "Certificates Officer role may already be assigned."
 
-        echo "CREATE workflow completed successfully."
+        echo "Key Vault RBAC roles assigned successfully."
 
     - name: Delete Infrastructure
       if: ${{ github.event.inputs.mode == 'delete' }}
@@ -123,5 +134,5 @@ jobs:
           exit 1
         fi
         echo "Deleting Resource Group: $RESOURCE_GROUP"
-        az group delete --name "$RESOURCE_GROUP" --yes --no-wait || true
+        az group delete --name "$RESOURCE_GROUP" --yes --no-wait --output none || true
         echo "NOTE: Key Vault soft-delete retention still applies. Purge is NOT performed by this workflow."

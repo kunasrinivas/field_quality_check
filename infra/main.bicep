@@ -1,11 +1,13 @@
 @description('Azure region for all resources')
 param location string = 'westeurope'
 
-@description('Name of the storage account')
-param storageAccountName string = 'fqcstoragedev'
+@description('Unique suffix derived from the resource group — keeps the storage account name globally unique and repeatable')
+param storageUniqueSuffix string = uniqueString(resourceGroup().id)
 
 @description('Name of the Key Vault')
-param keyVaultName string = 'fqct-kv-main'
+param keyVaultName string = 'fqct-kv-dev'
+
+var storageAccountName = 'fqctstg${storageUniqueSuffix}'
 
 module storage './modules/storage.bicep' = {
   name: 'StorageDeployment'
@@ -22,3 +24,5 @@ module keyVault './modules/keyvault.bicep' = {
     keyVaultName: keyVaultName
   }
 }
+
+output storageAccountName string = storageAccountName
