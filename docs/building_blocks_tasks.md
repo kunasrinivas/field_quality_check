@@ -132,3 +132,5 @@
 | [ADR-010](decisions/ADR-010-sql-authentication.md) | SQL Server authentication approach | 2026-05-02 |
 | [ADR-011](decisions/ADR-011-workflow-security-hardening.md) | Workflow security hardening | 2026-05-02 |
 | [ADR-012](decisions/ADR-012-apim-consumption-tier.md) | API Management Consumption tier for dev | 2026-05-02 |
+| [ADR-013](decisions/ADR-013-images-only-poc.md) | Images only for Vision POC (video excluded) | 2026-05-02 |
+| [ADR-014](decisions/ADR-014-azure-ai-vision.md) | Azure AI Vision for image analysis | 2026-05-02 |
