@@ -104,4 +104,5 @@ output sqlServerFqdn        string = sql.outputs.sqlServerFqdn
 output cosmosAccountName    string = cosmosAccountName
 output functionAppName      string = functions.outputs.functionAppName
 output functionAppHostname  string = functions.outputs.functionAppHostname
+#disable-next-line BCP318
 output apimGatewayUrl       string = deployApim ? apim.outputs!.apimGatewayUrl : 'APIM not deployed — set APIM_PUBLISHER_EMAIL secret to enable'

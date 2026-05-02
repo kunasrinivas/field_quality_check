@@ -22,14 +22,9 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-04-15' = {
     ]
     capabilities: [
       {
-        // Serverless — no capacity planning needed for dev; swap to provisioned for prod
         name: 'EnableServerless'
       }
     ]
-    enableAutomaticFailover: false
-    publicNetworkAccess: 'Enabled'
-    minimalTlsVersion: 'Tls12'
-    disableLocalAuth: false
   }
 }
 
@@ -55,10 +50,6 @@ resource auditTrailContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases
         kind: 'Hash'
         version: 2
       }
-      indexingPolicy: {
-        indexingMode: 'consistent'
-        automatic: true
-      }
     }
   }
 }
@@ -75,10 +66,6 @@ resource agentConversationsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlD
         kind: 'Hash'
         version: 2
       }
-      indexingPolicy: {
-        indexingMode: 'consistent'
-        automatic: true
-      }
     }
   }
 }
@@ -94,10 +81,6 @@ resource workOrdersContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases
         paths: ['/contractorId']
         kind: 'Hash'
         version: 2
-      }
-      indexingPolicy: {
-        indexingMode: 'consistent'
-        automatic: true
       }
     }
   }
