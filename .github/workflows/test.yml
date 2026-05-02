@@ -1,6 +1,7 @@
 name: Unit Tests
 
 on:
+  workflow_dispatch: {}   # manual trigger from GitHub Actions UI (any branch)
   push:
     branches: ["main", "dev"]
     paths:
